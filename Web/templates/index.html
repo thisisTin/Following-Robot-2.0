@@ -158,8 +158,6 @@
         // --- Event Listener: Receive info from server ---
         socket.on('robot_info', function(data) {
             statusState.textContent = 'STATE: ' + data.state;
-            
-            // *** FIX (Lỗi 1): Removed the stray 'G' ***
             statusFps.textContent = 'FPS: ' + data.fps; 
             
             statusDisplay.className = data.state.toLowerCase(); 
@@ -172,7 +170,7 @@
                 followBtn.className = '';
             }
 
-            // *** FIX (Lỗi 3): This logic now works because app.py sends 'data.light' ***
+            // Update Light button state
             if (data.light) {
                 lightBtn.textContent = 'Tắt Đèn';
                 lightBtn.className = 'on';
@@ -186,9 +184,7 @@
         document.getElementById('btn-follow').onclick = () => socket.emit('robot_command', { command: 'TOGGLE_FOLLOW' });
         document.getElementById('btn-manual').onclick = () => socket.emit('robot_command', { command: 'SET_MANUAL' });
         document.getElementById('btn-idle').onclick = () => socket.emit('robot_command', { command: 'SET_IDLE' });
-        
-        // *** FIX (Lỗi 3): This event now has a handler in app.py ***
-        lightBtn.onclick = () => socket.emit('toggle_light');
+        lightBtn.onclick = () => socket.emit('toggle_light'); // Sends light toggle command
 
         // --- Joystick Initialization ---
         var joystickContainer = document.getElementById('joystick-container');
@@ -210,46 +206,36 @@
             }
         }
 
-        // *** FIX (Lỗi 2): Updated Joystick move logic to 8-way (5 used) ***
+        // Joystick 8-Way move logic
         joystick.on('move', function (evt, data) {
             var angle = data.angle.degree;
-            var commandToSend = "STOP"; // Default to STOP
+            var commandToSend = "STOP"; 
 
-            // 8-Way Directional Logic (top half)
-            // Slices are 45 degrees wide.
-            // [67.5 - 112.5] = FORWARD
+            // 8-Way Directional Logic (Slices are 45 degrees wide, centered on 90, 270, 0/360, 180)
             if (angle > 67.5 && angle < 112.5) {
                 commandToSend = "FORWARD";
             }
-            // [247.5 - 292.5] = BACKWARD
             else if (angle > 247.5 && angle < 292.5){
                 commandToSend = "BACKWARD";
             }
-            // [22.5 - 67.5] = FORWARD_RIGHT
             else if (angle > 22.5 && angle < 67.5) {
                 commandToSend = "FORWARD_RIGHT";
             } 
-            // [112.5 - 157.5] = FORWARD_LEFT
             else if (angle > 112.5 && angle < 157.5) {
                 commandToSend = "FORWARD_LEFT";
             } 
-            // [202.5 - 247.5] = BACKWARD_LEFT
             else if (angle > 202.5 && angle <247.5) {
                 commandToSend = "BACKWARD_LEFT";
             }
-            // [292.5 - 337.5] = BACKWARD_RIGHT
             else if (angle > 292.5 && angle <337.5){
                 commandToSend = "BACKWARD_RIGHT";
             }
-            // [157.5 - 202.5] = LEFT
             else if (angle > 157.5 && angle < 202.5) {
                 commandToSend = "LEFT";
             } 
-            // [337.5 - 360] OR [0 - 22.5] = RIGHT
             else if (angle > 337.5 || angle < 22.5) {
                 commandToSend = "RIGHT";
-            }          
-            // Any angle in the bottom half (202.5 to 337.5) will result in "STOP"
+            } 
             
             sendManualCommand(commandToSend);
         });

@@ -6,12 +6,15 @@ import time
 import threading
 from flask import Flask, render_template, Response
 from flask_socketio import SocketIO, emit
+import serial
 # (Uncomment this when on Raspberry Pi)
 # import RPi.GPIO as GPIO 
 
 # --- 2. AI Model Initialization ---
 print("Loading AI Models...")
-model = YOLO('yolov8n.pt')
+# Initialize YOLO model for object tracking
+model = YOLO('yolov8n.pt') 
+# Initialize MediaPipe Hands for gesture recognition
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(min_detection_confidence=0.6, min_tracking_confidence=0.5, max_num_hands=1)
 mp_drawing = mp.solutions.drawing_utils
@@ -22,11 +25,21 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your_very_secret_key'
 socketio = SocketIO(app, async_mode='threading')
 
-# --- 4. Global Variables ---
+# --- 4. Global Variables & Serial Initialization ---
 global_frame = None                     # Stores the latest camera frame for streaming
 robot_state = "IDLE"                    # Current robot mode (IDLE, FOLLOWING, MANUAL)
 manual_command = "STOP"                 # Current manual joystick command
 lock = threading.Lock()                 # Thread lock to protect shared variables
+
+# Serial Communication Setup (Adjust port name as needed for your OS)
+SERIAL_PORT = 'COM6' # Example: Use '/dev/ttyACM0' on Linux/Pi or 'COM3' on Windows
+BAUD_RATE = 115200
+try:
+    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1) 
+    print(f"Serial Port {SERIAL_PORT} opened successfully.")
+except serial.SerialException as e:
+    print(f"ERROR: Could not open serial port {SERIAL_PORT}. {e}")
+    ser = None # Set to None if serial failed
 
 # Gesture control variables
 gesture_timer = 0
@@ -34,46 +47,69 @@ GESTURE_HOLD_TIME = 3                   # seconds
 current_gesture = None
 last_gesture_for_timer = None
 
-# *** FIX: Added missing light state variable ***
+# Hardware state variables
 light_state = False                     # Tracks if the light relay is ON or OFF
-# LIGHT_PIN = 17 # (Example: GPIO pin for the relay)
+# LIGHT_PIN = 17
 
-# --- 5. Robot Hardware Functions (Simulated) ---
+# --- 5. Robot Hardware Functions (Serial Implementation) ---
 
 def execute_robot_move(command):
-    """ Executes the actual motor commands based on the joystick/AI """
-    # This is where you will add your motor control logic (e.g., GPIO, PWM)
-    if command == "FORWARD":
-        print("ROBOT: MOVING FORWARD")
-    elif command == "LEFT":
-        print("ROBOT: TURNING LEFT")
-    elif command == "RIGHT":
-        print("ROBOT: TURNING RIGHT")
-    elif command == "BACKWARD":
-        print("ROBOT: MOVING BACKWARD")    
-    elif command == "FORWARD_LEFT":
-        print("ROBOT: MOVING FORWARD LEFT")
-    elif command == "FORWARD_RIGHT":
-        print("ROBOT: MOVING FORWARD RIGHT")
-    elif command == "BACKWARD_LEFT":
-        print("ROBOT: MOVING BACKWARD LEFT")
-    elif command == "BACKWARD_RIGHT":
-        print("ROBOT: MOVING BACKWARD RIGHT")    
-    elif command == "STOP":
-        print("ROBOT: STOPPING")
+    """ Executes the actual motor commands by sending PWM values via Serial. """
+    global ser
+    
+    # Define speed (PWM 0-255)
+    SPEED = 120 
+    
+    # Map high-level command to (Left_PWM, Right_PWM)
+    # Note: Directions are relative to the robot.
+    cmd_map = {
+        "FORWARD": (SPEED, SPEED),
+        "LEFT": (-SPEED, SPEED),      # Pivot Left
+        "RIGHT": (SPEED, -SPEED),     # Pivot Right
+        "BACKWARD": (-SPEED, -SPEED), 
+        "FORWARD_LEFT": (int(SPEED*0.5), SPEED),  # Curved turn left
+        "FORWARD_RIGHT": (SPEED, int(SPEED*0.5)), # Curved turn right
+        "BACKWARD_LEFT": (-SPEED, -int(SPEED*0.5)),
+        "BACKWARD_RIGHT": (-int(SPEED*0.5), -SPEED),
+        "STOP": (0, 0)
+    }
+    
+    left_pwm, right_pwm = cmd_map.get(command, (0, 0))
+
+    # Construct Serial Command: MOVE:left_speed:right_speed\n
+    serial_command = f"MOVE:{left_pwm}:{right_pwm}\n" 
+    
+    if ser:
+        try:
+            ser.write(serial_command.encode())
+            # This is the line sent to ESP32's Serial Monitor
+            print(f"SERIAL SENT: {serial_command.strip()} -> L_PWM:{left_pwm} R_PWM:{right_pwm}") 
+        except Exception as e:
+            print(f"Serial write error: {e}")
+    else:
+        print(f"ROBOT SIMULATED: {command} -> L_PWM:{left_pwm} R_PWM:{right_pwm}")
+
 
 def toggle_light_relay(new_state):
-    #Controls the light relay
-    # (Uncomment and modify when on Pi)
+    """Controls the light relay via Serial."""
+    global ser
+    
     if new_state:
+        serial_command = "LIGHT:ON\n"
         print("RELAY: Turning light ON")
-        # GPIO.output(LIGHT_PIN, GPIO.HIGH)
     else:
+        serial_command = "LIGHT:OFF\n"
         print("RELAY: Turning light OFF")
-        # GPIO.output(LIGHT_PIN, GPIO.LOW)
+    
+    if ser:
+        try:
+            ser.write(serial_command.encode())
+            print(f"SERIAL SENT: {serial_command.strip()}")
+        except Exception as e:
+            print(f"Serial write error: {e}")
 
 def count_fingers(hand_landmarks):
-    """ Counts the number of extended fingers from MediaPipe landmarks. """
+    """ Counts the number of extended fingers from MediaPipe landmarks. (Logic unchanged)"""
     finger_count = 0
     tip_ids = [mp_hands.HandLandmark.THUMB_TIP, mp_hands.HandLandmark.INDEX_FINGER_TIP,
                mp_hands.HandLandmark.MIDDLE_FINGER_TIP, mp_hands.HandLandmark.RING_FINGER_TIP,
@@ -92,12 +128,41 @@ def count_fingers(hand_landmarks):
     return finger_count
 
 # --- 6. Main Robot Logic Thread ---
-def robot_logic_thread():
-    """ This function runs in a separate thread, handling all AI and camera logic. """
-    global global_frame, robot_state, manual_command, gesture_timer, current_gesture, last_gesture_for_timer, light_state
+def serial_read_thread():
+    """Reads all incoming data from the ESP32 Serial port and prints it."""
+    global ser
+    if not ser:
+        print("Serial reader thread failed: Serial port is not open.")
+        return
 
+    print("Serial reading thread started...")
+    while True:
+        try:
+            if ser.in_waiting > 0:
+                # Read line until '\n'
+                line = ser.readline().decode('utf-8', errors='ignore').strip()
+                if line:
+                    # Log the response received from ESP32
+                    print(f"ESP32 RESPONSE: {line}") 
+                    
+                    # Bạn có thể thêm logic ở đây để cập nhật trạng thái web 
+                    # dựa trên phản hồi của ESP32 (Ví dụ: trạng thái cảm biến vật cản)
+                    
+            time.sleep(0.01) # Small delay to prevent high CPU usage
+        except Exception as e:
+            print(f"Error reading from serial: {e}")
+            time.sleep(1)
+
+def robot_logic_thread():
+    """ This function runs in a separate thread, handling all AI, Camera, and Robot control logic. """
+    global global_frame, robot_state, manual_command, gesture_timer, current_gesture, last_gesture_for_timer, light_state
+    # Initialize Camera
     cap = cv2.VideoCapture(0)
     success, img = cap.read()
+    if not success:
+        print("FATAL: Cannot read camera, check connection.")
+        return
+        
     FRAME_HEIGHT, FRAME_WIDTH, _ = img.shape
     # Defines the "center" zone for following
     ZONE_LEFT = FRAME_WIDTH * 0.25
@@ -127,6 +192,8 @@ def robot_logic_thread():
         
         # --- Gesture Recognition (Timer Logic) ---
         if current_state != "MANUAL":
+            # (MediaPipe processing and state change logic remains the same)
+            # ... (Existing gesture logic here)
             hand_results = hands.process(image_rgb)
             if hand_results.multi_hand_landmarks:
                 for hand_landmarks in hand_results.multi_hand_landmarks:
@@ -160,7 +227,7 @@ def robot_logic_thread():
         # --- State Machine Logic ---
         if current_state == "IDLE":
             hud_color = (0, 255, 255) # Yellow
-            execute_robot_move("STOP")
+            execute_robot_move("STOP") # Send STOP command (PWM 0,0)
 
         elif current_state == "FOLLOWING":
             hud_color = (0, 255, 0) # Green
@@ -174,10 +241,10 @@ def robot_logic_thread():
                     cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     centerX = (x1 + x2) / 2
                     
-                    # AI movement command (This logic is correct)
+                    # AI movement command
                     if centerX < ZONE_LEFT: execute_robot_move("LEFT")
                     elif centerX > ZONE_RIGHT: execute_robot_move("RIGHT")
-                    else: execute_robot_move("FORWARD")
+                    else: execute_robot_move("FORWARD") # Maintain distance
                     break
             if not found_person:
                 execute_robot_move("STOP")
@@ -188,11 +255,17 @@ def robot_logic_thread():
 
         elif current_state == "MANUAL":
             hud_color = (255, 0, 0) # Blue
-            execute_robot_move(current_manual_cmd) # Execute joystick command
+            # Execute joystick command (sends corresponding PWM via Serial)
+            execute_robot_move(current_manual_cmd) 
 
         # --- HUD & Frame Update ---
         new_frame_time = time.time()
-        fps = 1 / (new_frame_time - prev_frame_time)
+        # Handle division by zero for FPS
+        if (new_frame_time - prev_frame_time) > 0:
+            fps = 1 / (new_frame_time - prev_frame_time)
+        else:
+            fps = 0
+            
         prev_frame_time = new_frame_time
 
         cv2.putText(image, hud_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, hud_color, 2)
@@ -205,8 +278,7 @@ def robot_logic_thread():
 
         # Emit info to all connected web clients
         with lock:
-            current_light_state = light_state # Get current light state
-        # *** FIX: Added missing 'light' info to the emit ***
+            current_light_state = light_state 
         socketio.emit('robot_info', {'fps': int(fps), 'state': current_state, 'light': current_light_state})
 
         # Encode frame to JPEG and store in global variable for streaming
@@ -214,7 +286,7 @@ def robot_logic_thread():
             _, buffer = cv2.imencode('.jpg', image)
             global_frame = buffer.tobytes()
 
-# --- 7. Flask HTTP Routes ---
+# --- 7. Flask HTTP Routes (Unchanged) ---
 @app.route('/')
 def index():
     """ Serves the main HTML page. """
@@ -243,7 +315,6 @@ def handle_connect():
     print('Client connected!')
     with lock:
         # Send current state on connect
-        # *** FIX: Added missing 'light' info ***
         emit('robot_info', {'fps': 0, 'state': robot_state, 'light': light_state})
 
 @socketio.on('robot_command')
@@ -268,11 +339,9 @@ def handle_robot_command(data):
                 manual_command = command.split('_')[1] # e.g., "FORWARD_LEFT"
                 
     # Send updated state to all clients
-    # *** FIX: Added missing 'light' info ***
     with lock:
         emit('robot_info', {'fps': 0, 'state': robot_state, 'light': light_state}, broadcast=True)
 
-# *** FIX: Added missing event handler for the light button ***
 @socketio.on('toggle_light')
 def handle_toggle_light():
     """ Handles the 'toggle_light' event from the button. """
@@ -282,7 +351,8 @@ def handle_toggle_light():
         current_light_state = light_state
         current_state = robot_state
     
-    toggle_light_relay(current_light_state) # Call hardware function
+    # Send Serial command to ESP32
+    toggle_light_relay(current_light_state) 
     
     # Emit the new state to all clients
     emit('robot_info', {'fps': 0, 'state': current_state, 'light': current_light_state}, broadcast=True)
