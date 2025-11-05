@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>🌍 Robot Operating Control Panel</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
+    
+    <style>
+        @keyframes subtleGradient {
+            0%   { background-position: 0% 50%; }
+            50%  { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        @keyframes pulseGreen { 0% { box-shadow: 0 0 3px #0f0; } 50% { box-shadow: 0 0 15px #0f0; } 100% { box-shadow: 0 0 3px #0f0; } }
+        @keyframes pulseYellow { 0% { box-shadow: 0 0 3px #fa0; } 50% { box-shadow: 0 0 15px #fa0; } 100% { box-shadow: 0 0 3px #fa0; } }
+        @keyframes pulseBlue { 0% { box-shadow: 0 0 3px #0af; } 50% { box-shadow: 0 0 15px #0af; } 100% { box-shadow: 0 0 3px #0af; } }
+        
+        html, body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #e0e0e0; display: flex;
+            margin: 0; padding: 0;
+            box-sizing: border-box;
+            height: 100vh; width: 100vw;
+            overflow: hidden;
+            background: linear-gradient(-45deg, #1a1a2e, #121212, #1a1a2e);
+            background-size: 400% 400%;
+            animation: subtleGradient 20s ease infinite;
+        }
+        h1, h2 {
+            font-weight: 500; color: #ffffff;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 8px; margin-top: 0;
+        }
+        .container {
+            display: flex; flex-direction: column;
+            width: 100%; height: 100%; gap: 0;
+        }
+        .video-container {
+            flex: 1; display: flex; flex-direction: column;
+            background: #000; min-height: 0;
+            padding: 5px; box-sizing: border-box;
+        }
+        .controls {
+            flex: 1; display: flex; flex-direction: column;
+            min-height: 0; overflow-y: auto;
+            padding: 1rem;
+            background: rgba(30, 30, 30, 0.65);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
+            box-sizing: border-box;
+        }
+        .video-container img {
+            width: 100%; height: 100%;
+            object-fit: contain;
+            border-radius: 8px;
+        }
+        #status-display {
+            padding: 10px; background: rgba(0, 0, 0, 0.2);
+            margin-bottom: 10px; border-radius: 8px;
+            border-left: 5px solid #555;
+            transition: all 0.3s ease-in-out;
+            display: flex; justify-content: space-between;
+        }
+        #status-state { font-size: 1.2em; font-weight: bold; }
+        #status-fps { font-size: 1.2em; color: #aaa; }
+        #status-display.following { animation: pulseGreen 1.5s infinite ease-in-out; border-left-color: #0f0; }
+        #status-display.idle { animation: pulseYellow 2s infinite ease-in-out; border-left-color: #fa0; }
+        #status-display.manual { animation: pulseBlue 1.5s infinite ease-in-out; border-left-color: #0af; }
+        .mode-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .mode-controls button {
+            padding: 12px 5px; font-size: 0.9em;
+            font-weight: 600; color: white;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px; cursor: pointer;
+            background: rgba(255, 255, 255, 0.05);
+            transition: all 0.2s ease;
+        }
+        .mode-controls button:active { transform: translateY(2px); }
+        #btn-follow { color: #00ff00; }
+        #btn-follow.stop { color: #ff3b3b; }
+        #btn-manual { color: #00aaff; }
+        #btn-idle { color: #ffaa00; }
+        #btn-light {
+            color: #f0f0f0;
+            background: rgba(80, 80, 80, 0.5);
+        }
+        #btn-light.on {
+            color: #000;
+            background: #ffff00;
+            box-shadow: 0 0 15px #ffff00;
+        }
+        .joystick-area {
+            display: flex; align-items: center;
+            justify-content: center;
+            padding-top: 10px;
+            flex-grow: 1;
+        }
+        #joystick-container {
+            position: relative;
+            width: 150px; height: 150px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .nipple .front {
+            background: linear-gradient(145deg, #00aaff, #0077cc) !important;
+        }
+        .nipple.active .front {
+            transform: scale(1.1);
+            box-shadow: 0 0 20px #00aaff, 0 0 35px #00ffff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="video-container">
+            <img src="{{ url_for('video_feed') }}" id="video-stream">
+        </div>
+        
+        <div class="controls">
+            <div id="status-display">
+                <div id="status-state">STATE: ...</div>
+                <div id="status-fps">FPS: --</div>
+            </div>
+
+            <div class="mode-controls">
+                <button id="btn-follow">Follow</button>
+                <button id="btn-manual">Manual</button>
+                <button id="btn-idle">Idle</button>
+                <button id="btn-light">Bật Đèn</button>
+            </div>
+
+            <div class="joystick-area">
+                <div id="joystick-container"></div>
+            </div>
+            <p style="text-align: center; margin:0; font-size: 0.8em;">Lệnh: <b id="joystick-command">STOP</b></p>
+        </div>
+    </div>
+
+    <script>
+        var socket = io.connect('http://' + document.domain + ':' + location.port);
+        
+        var statusDisplay = document.getElementById('status-display');
+        var statusState = document.getElementById('status-state');
+        var statusFps = document.getElementById('status-fps');
+        var followBtn = document.getElementById('btn-follow');
+        var lightBtn = document.getElementById('btn-light');
+        var joystickCommandDisplay = document.getElementById('joystick-command');
+
+        // --- Event Listener: Receive info from server ---
+        socket.on('robot_info', function(data) {
+            statusState.textContent = 'STATE: ' + data.state;
+            
+            // *** FIX (Lỗi 1): Removed the stray 'G' ***
+            statusFps.textContent = 'FPS: ' + data.fps; 
+            
+            statusDisplay.className = data.state.toLowerCase(); 
+
+            if (data.state === 'FOLLOWING') {
+                followBtn.textContent = 'Stop Follow';
+                followBtn.className = 'stop';
+            } else {
+                followBtn.textContent = 'Start Follow';
+                followBtn.className = '';
+            }
+
+            // *** FIX (Lỗi 3): This logic now works because app.py sends 'data.light' ***
+            if (data.light) {
+                lightBtn.textContent = 'Tắt Đèn';
+                lightBtn.className = 'on';
+            } else {
+                lightBtn.textContent = 'Bật Đèn';
+                lightBtn.className = '';
+            }
+        });
+
+        // --- Event Listeners: Send commands to server ---
+        document.getElementById('btn-follow').onclick = () => socket.emit('robot_command', { command: 'TOGGLE_FOLLOW' });
+        document.getElementById('btn-manual').onclick = () => socket.emit('robot_command', { command: 'SET_MANUAL' });
+        document.getElementById('btn-idle').onclick = () => socket.emit('robot_command', { command: 'SET_IDLE' });
+        
+        // *** FIX (Lỗi 3): This event now has a handler in app.py ***
+        lightBtn.onclick = () => socket.emit('toggle_light');
+
+        // --- Joystick Initialization ---
+        var joystickContainer = document.getElementById('joystick-container');
+        var currentManualCommand = "STOP";
+        var joystick = nipplejs.create({
+            zone: joystickContainer,
+            mode: 'static',
+            position: { left: '50%', top: '50%' },
+            color: 'white',
+            size: 140,
+            threshold: 0.2
+        });
+
+        function sendManualCommand(cmd) {
+            if (cmd !== currentManualCommand) {
+                socket.emit('robot_command', { command: 'MANUAL_' + cmd });
+                joystickCommandDisplay.textContent = cmd;
+                currentManualCommand = cmd;
+            }
+        }
+
+        // *** FIX (Lỗi 2): Updated Joystick move logic to 8-way (5 used) ***
+        joystick.on('move', function (evt, data) {
+            var angle = data.angle.degree;
+            var commandToSend = "STOP"; // Default to STOP
+
+            // 8-Way Directional Logic (top half)
+            // Slices are 45 degrees wide.
+            // [67.5 - 112.5] = FORWARD
+            if (angle > 67.5 && angle < 112.5) {
+                commandToSend = "FORWARD";
+            }
+            // [247.5 - 292.5] = BACKWARD
+            else if (angle > 247.5 && angle < 292.5){
+                commandToSend = "BACKWARD";
+            }
+            // [22.5 - 67.5] = FORWARD_RIGHT
+            else if (angle > 22.5 && angle < 67.5) {
+                commandToSend = "FORWARD_RIGHT";
+            } 
+            // [112.5 - 157.5] = FORWARD_LEFT
+            else if (angle > 112.5 && angle < 157.5) {
+                commandToSend = "FORWARD_LEFT";
+            } 
+            // [202.5 - 247.5] = BACKWARD_LEFT
+            else if (angle > 202.5 && angle <247.5) {
+                commandToSend = "BACKWARD_LEFT";
+            }
+            // [292.5 - 337.5] = BACKWARD_RIGHT
+            else if (angle > 292.5 && angle <337.5){
+                commandToSend = "BACKWARD_RIGHT";
+            }
+            // [157.5 - 202.5] = LEFT
+            else if (angle > 157.5 && angle < 202.5) {
+                commandToSend = "LEFT";
+            } 
+            // [337.5 - 360] OR [0 - 22.5] = RIGHT
+            else if (angle > 337.5 || angle < 22.5) {
+                commandToSend = "RIGHT";
+            }          
+            // Any angle in the bottom half (202.5 to 337.5) will result in "STOP"
+            
+            sendManualCommand(commandToSend);
+        });
+
+        // Send STOP when joystick is released
+        joystick.on('end', () => sendManualCommand("STOP"));
+        
+    </script>
+</body>
+</html>
