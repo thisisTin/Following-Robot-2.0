@@ -1,16 +1,16 @@
-#include <Arduino.h>
+#include <Serial.h>
 #include <NewPing.h> 
 
 // Define PINS ESP32 with L298N 
-#define ENA 14
+#define ENA 13
 #define IN1 27
 #define IN2 26
-#define ENB 34
-#define IN3 32 
-#define IN4 35
+#define ENB 15
+#define IN3 16 
+#define IN4 17
 
 //Light Switch (DEMO mode) 
-#define relay 13 
+#define relay 34 
 
 // Define PINS ESP32 with HC-SR04 (maximum distance=4500)
 #define TRIG_PIN_FRONT 22 //TRIG_PIN
