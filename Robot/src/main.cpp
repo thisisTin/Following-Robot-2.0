@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include <NewPing.h> 
+// #include <NewPing.h> // (Tạm tắt cảm biến)
 
 // Define PINS ESP32 with L298N 
 #define ENA 14  // Left Motor PWM
@@ -12,18 +12,18 @@
 // Light Switch (DEMO mode) 
 #define relay 13 // Relay/Light Control Pin
 
-// Define PINS ESP32 with HC-SR04 
-#define TRIG_PIN_FRONT 22 //TRIG_PIN
-#define ECHO_PIN_FRONT 23 //ECHO_PIN
-#define MAX_DISTANCE 500 // MAXIMUM DISTANCE (cm) 
-NewPing sonarFront(TRIG_PIN_FRONT, ECHO_PIN_FRONT, MAX_DISTANCE);
+// (Tạm tắt cảm biến)
+// #define TRIG_PIN_FRONT 22 //TRIG_PIN
+// #define ECHO_PIN_FRONT 23 //ECHO_PIN
+// #define MAX_DISTANCE 500 // MAXIMUM DISTANCE (cm) 
+// NewPing sonarFront(TRIG_PIN_FRONT, ECHO_PIN_FRONT, MAX_DISTANCE);
 
 // Define Variables
 int leftSpeed = 0; 
 int rightSpeed = 0; 
-bool obstacleDetected = false; 
+// bool obstacleDetected = false; // (Tạm tắt cảm biến)
 unsigned long lastObstacleCheck = 0; 
-const int obstacleCheckInterval = 100; // (ms)
+// const int obstacleCheckInterval = 100; // (ms)
 String inputString = ""; // Serial String buffer
 bool stringComplete = false; // Received Flag
 
@@ -35,72 +35,52 @@ void stopMotors() {
     rightSpeed = 0; 
 }
 
-// Light Blinking To Test The LED
+// (Các hàm lightTest, fake_progress_bar giữ nguyên...)
 void lightTest(){
-    digitalWrite(relay, HIGH);
-    delay(1500);
-    digitalWrite(relay,LOW);
-    delay(1500);
+    digitalWrite(relay, HIGH); delay(500);
+    digitalWrite(relay,LOW); delay(500);
 }
-
-// Progress Bar
 void fake_progress_bar() {
     Serial.print("Loading [");
-    for (int i = 0; i < 20; i++) {
-        Serial.print("#");
-        delay(150);      
-    }
+    for (int i = 0; i < 20; i++) { Serial.print("#"); delay(50); }
     Serial.println("] 100%"); 
 }
+
 
 // Robot Motion
 void moveMotors(int targetLeftSpeed, int targetRightSpeed) { 
     leftSpeed = targetLeftSpeed;
     rightSpeed = targetRightSpeed;
     
-    // Left Motor Direction Logic
-    if (targetLeftSpeed >= 0) { // Forward
-        digitalWrite(IN1, HIGH); 
-        digitalWrite(IN2, LOW); 
-    }
-    else { // Backward
-        digitalWrite(IN1, LOW); 
-        digitalWrite(IN2, HIGH); 
-        targetLeftSpeed = -targetLeftSpeed; // Use positive value for PWM
+    // (Logic motor giữ nguyên...)
+    if (targetLeftSpeed >= 0) { 
+        digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW); 
+    } else { 
+        digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH); 
+        targetLeftSpeed = -targetLeftSpeed; 
     } 
-    
-    // Right Motor Direction Logic
-    if (targetRightSpeed >= 0) { // Forward
-        digitalWrite(IN3, HIGH); 
-        digitalWrite(IN4, LOW); 
+    if (targetRightSpeed >= 0) { 
+        digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW); 
+    } else { 
+        digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH); 
+        targetRightSpeed = -targetRightSpeed; 
     } 
-    else { // Backward
-        digitalWrite(IN3, LOW); 
-        digitalWrite(IN4, HIGH); 
-        targetRightSpeed = -targetRightSpeed; // Use positive value for PWM
-    } 
-
-    // Speed Constrain from 0-255 
     targetLeftSpeed = constrain(targetLeftSpeed, 0, 255); 
     targetRightSpeed = constrain(targetRightSpeed, 0, 255); 
-    
-    // Set actual PWM to motors
     analogWrite(ENA, targetLeftSpeed); 
     analogWrite(ENB, targetRightSpeed);
 } 
 
-// Send Status Function
+// (Hàm sendStatus giữ nguyên, nhưng bỏ phần cảm biến)
 void sendStatus() { 
-    int distFront = sonarFront.ping_cm(); 
-    if (distFront == 0) distFront = MAX_DISTANCE;     
+    // int distFront = sonarFront.ping_cm(); // (Tạm tắt cảm biến)
+    // if (distFront == 0) distFront = MAX_DISTANCE;     
     Serial.print("STATUS:"); 
-    Serial.print(leftSpeed); 
-    Serial.print(":"); 
-    Serial.print(rightSpeed);
-    Serial.print(":"); 
-    Serial.print(distFront); 
+    Serial.print(leftSpeed); Serial.print(":"); 
+    Serial.print(rightSpeed); Serial.print(":"); 
+    Serial.print(0); // Gửi 0 cho khoảng cách
     Serial.print(":");  
-    Serial.println(obstacleDetected ? "YES" : "NO"); 
+    Serial.println("NO"); // Luôn báo không có vật cản
 }
 
 // Control Unit - Main Command Processor
@@ -110,7 +90,6 @@ void processCommand(String command) {
     if (command == "CHING") { 
         Serial.println("CHON_DING_DONG"); 
     } 
-    // MOVE: MOVE:left_speed:right_speed (e.g., MOVE:120:120)
     else if (command.startsWith("MOVE:")) { 
         int firstColon = command.indexOf(':'); 
         int secondColon = command.indexOf(':', firstColon + 1); 
@@ -120,44 +99,32 @@ void processCommand(String command) {
             int targetLeftSpeed = leftSpeedStr.toInt(); 
             int targetRightSpeed = rightSpeedStr.toInt(); 
             
-            // Chỉ di chuyển nếu không có vật cản
-            if (!obstacleDetected) {
-                moveMotors(targetLeftSpeed, targetRightSpeed); 
-            } else {
-                // Nếu có vật cản, buộc dừng
-                stopMotors();
-            }
+            // (Đã bỏ check vật cản)
+            moveMotors(targetLeftSpeed, targetRightSpeed); 
             
             Serial.print("ROBOT_PWM:"); 
-            Serial.print(leftSpeed); // In ra tốc độ thực tế (có thể là 0 nếu kẹt)
+            Serial.print(targetLeftSpeed); // In ra tốc độ YÊU CẦU
             Serial.print(":");
-            Serial.println(rightSpeed);
+            Serial.println(targetRightSpeed);
             Serial.println("OK:MOVE"); 
         } 
     } 
-    // LIGHT: LIGHT:ON or LIGHT:OFF
     else if (command.startsWith("LIGHT:")) { 
         String state = command.substring(6); 
         state.trim(); 
         if (state == "ON") { 
-            digitalWrite(relay, HIGH); 
-            Serial.println("OK:LIGHT_ON"); 
-        } 
-        else if (state == "OFF") { 
-            digitalWrite(relay, LOW); 
-            Serial.println("OK:LIGHT_OFF"); 
+            digitalWrite(relay, HIGH); Serial.println("OK:LIGHT_ON"); 
+        } else if (state == "OFF") { 
+            digitalWrite(relay, LOW); Serial.println("OK:LIGHT_OFF"); 
         } 
     } 
+    // (Các lệnh STOP, GET_DIST, STATUS, ERROR giữ nguyên...)
     else if (command == "STOP") { 
         stopMotors(); 
         Serial.println("OK:STOP"); 
     } 
     else if (command == "GET_DIST") { 
-        int distanceFront = sonarFront.ping_cm();  
-        if (distanceFront == 0) distanceFront = MAX_DISTANCE; 
-        Serial.print("DIST:");
-        Serial.print(distanceFront); 
-        Serial.println(":"); 
+        Serial.print("DIST:0:\n"); // (Tạm tắt cảm biến)
     } 
     else if (command == "STATUS") { 
         sendStatus(); 
@@ -168,23 +135,20 @@ void processCommand(String command) {
     } 
 } 
 
-// Check the available Obstacles
-void checkObstacles() { 
-    int distanceFront = sonarFront.ping_cm(); 
-    
-    // Chỉ coi là vật cản nếu đang đi tới
-    bool isMovingForward = (leftSpeed > 0 || rightSpeed > 0);
-    
-    if (isMovingForward && (distanceFront > 0 && distanceFront < 30)){
-        if (!obstacleDetected) { // Chỉ in 1 lần
-             Serial.println("OBSTACLE_DETECTED"); 
-        }
-        obstacleDetected = true; 
-    } 
-    else { 
-        obstacleDetected = false; 
-    } 
-}
+// (Tạm tắt cảm biến)
+// void checkObstacles() { 
+//     int distanceFront = sonarFront.ping_cm(); 
+//     bool isMovingForward = (leftSpeed > 0 || rightSpeed > 0);
+//     if (isMovingForward && (distanceFront > 0 && distanceFront < 30)){
+//         if (!obstacleDetected) { 
+//              Serial.println("OBSTACLE_DETECTED"); 
+//         }
+//         obstacleDetected = true; 
+//     } 
+//     else { 
+//         obstacleDetected = false; 
+//     } 
+// }
 
 void setup() { 
     Serial.begin(115200); 
@@ -203,7 +167,7 @@ void setup() {
     lightTest(); 
     Serial.println("Light Test Completed");
     fake_progress_bar();
-    Serial.println("Robot is Up and Prime!!!");
+    Serial.println("Robot is Up and Prime!!! (SENSOR DISABLED)"); // Thông báo đã tắt cảm biến
 } 
 
 void loop() { 
@@ -222,16 +186,16 @@ void loop() {
         }     
     }
 
-    if (millis() - lastObstacleCheck >= obstacleCheckInterval) { 
-        checkObstacles(); 
-        lastObstacleCheck = millis(); 
-    } 
-
-    // Logic an toàn: Nếu có vật cản, buộc dừng motor
-    if (obstacleDetected) { 
-        if(leftSpeed > 0 || rightSpeed > 0) { // Chỉ dừng nếu đang đi tới
-            stopMotors(); 
-            Serial.println("AUTO_STOP: Obstacle!");
-        }
-    }
+    // (Tạm tắt cảm biến)
+    // if (millis() - lastObstacleCheck >= obstacleCheckInterval) { 
+    //     checkObstacles(); 
+    //     lastObstacleCheck = millis(); 
+    // } 
+    // (Tạm tắt logic an toàn)
+    // if (obstacleDetected) { 
+    //     if(leftSpeed > 0 || rightSpeed > 0) { 
+    //         stopMotors(); 
+    //         Serial.println("AUTO_STOP: Obstacle!");
+    //     }
+    // }
 }
