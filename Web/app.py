@@ -8,7 +8,7 @@ from flask import Flask, render_template, Response
 from flask_socketio import SocketIO, emit
 import serial
 # (Uncomment this when on Raspberry Pi)
-# import RPi.GPIO as GPIO 
+# import RPi.GPIO as GPIO
 
 # --- 2. AI Model Initialization ---
 print("Loading AI Models...")
@@ -32,7 +32,7 @@ manual_command = "STOP"                 # Current manual joystick command
 lock = threading.Lock()                 # Thread lock to protect shared variables
 
 # Serial Communication Setup (Adjust port name as needed for your OS)
-SERIAL_PORT = 'COM6' # Example: Use '/dev/ttyACM0' on Linux/Pi or 'COM3' on Windows
+SERIAL_PORT = 'COM6' # MAC '/dev/ttyACM0
 BAUD_RATE = 115200
 try:
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1) 
