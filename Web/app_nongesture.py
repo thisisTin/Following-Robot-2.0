@@ -12,10 +12,8 @@ import serial
 
 # --- 2. AI Model Initialization ---
 print("Loading AI Models...")
-# Initialize YOLO model for object tracking
-model = YOLO('yolov8n.pt') # (Vẫn giữ YOLO)
+model = YOLO('yolov8n.pt') 
 # (Tạm tắt MediaPipe)
-# Initialize MediaPipe Hands for gesture recognition
 # mp_hands = mp.solutions.hands
 # hands = mp_hands.Hands(min_detection_confidence=0.6, min_tracking_confidence=0.5, max_num_hands=1)
 # mp_drawing = mp.solutions.drawing_utils
@@ -27,31 +25,29 @@ app.config['SECRET_KEY'] = 'your_very_secret_key'
 socketio = SocketIO(app, async_mode='threading')
 
 # --- 4. Global Variables & Serial Initialization ---
-global_frame = None                     # Stores the latest camera frame for streaming
-robot_state = "IDLE"                    # Current robot mode (IDLE, FOLLOWING, MANUAL)
-manual_command = "STOP"                 # Current manual joystick command
-lock = threading.Lock()                 # Thread lock to protect shared variables
+global_frame = None                  # Stores the latest camera frame for streaming
+robot_state = "IDLE"                 # Current robot mode (IDLE, FOLLOWING, MANUAL)
+manual_command = "STOP"              # Current manual joystick command
+lock = threading.Lock()              # Thread lock to protect shared variables
 
 # Serial Communication Setup (Adjust port name as needed for your OS)
-# (Nhớ sửa 2 dòng này cho Pi 5!)
 SERIAL_PORT = '/dev/ttyUSB1' # MAC '/dev/ttyACM0' <-- SỬA CỔNG NÀY
 BAUD_RATE = 9600             # (Đang là 9600, khớp với ESP32)
 try:
-    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1) 
+    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)  
     print(f"Serial Port {SERIAL_PORT} opened successfully at {BAUD_RATE} baud.")
 except serial.SerialException as e:
     print(f"ERROR: Could not open serial port {SERIAL_PORT}. {e}")
     ser = None # Set to None if serial failed
 
 # (Tạm tắt Gesture)
-# Gesture control variables
 # gesture_timer = 0
-# GESTURE_HOLD_TIME = 3                   # seconds
+# GESTURE_HOLD_TIME = 3              # seconds
 # current_gesture = None
 # last_gesture_for_timer = None
 
 # Hardware state variables
-light_state = False                     # Tracks if the light relay is ON or OFF
+light_state = False                  # Tracks if the light relay is ON or OFF
 # LIGHT_PIN = 17
 
 # --- 5. Robot Hardware Functions (Serial Implementation) ---
@@ -64,14 +60,14 @@ def execute_robot_move(command):
     # (Sử dụng tốc độ cao 190/220 như đã sửa)
     SPEED = 190
     TURN_SPEED = 220
-    CURVE_SPEED_SLOW = int(SPEED * 0.5) 
+    CURVE_SPEED_SLOW = int(SPEED * 0.5)  
     CURVE_SPEED_FAST = SPEED
     
     cmd_map = {
         "FORWARD": (SPEED, SPEED),
         "LEFT": (-TURN_SPEED, TURN_SPEED),      # Pivot Left
         "RIGHT": (TURN_SPEED, -TURN_SPEED),     # Pivot Right
-        "BACKWARD": (-SPEED, -SPEED), 
+        "BACKWARD": (-SPEED, -SPEED),  
         "FORWARD_LEFT": (CURVE_SPEED_SLOW, CURVE_SPEED_FAST),  # Curved turn left
         "FORWARD_RIGHT": (CURVE_SPEED_FAST, CURVE_SPEED_SLOW), # Curved turn right
         "BACKWARD_LEFT": (-CURVE_SPEED_FAST, -CURVE_SPEED_SLOW),
@@ -82,13 +78,15 @@ def execute_robot_move(command):
     left_pwm, right_pwm = cmd_map.get(command, (0, 0))
 
     # Construct Serial Command: MOVE:left_speed:right_speed\n
-    serial_command = f"MOVE:{left_pwm}:{right_pwm}\n" 
+    serial_command = f"MOVE:{left_pwm}:{right_pwm}\n"  
     
     if ser:
         try:
             ser.write(serial_command.encode())
             # This is the line sent to ESP32's Serial Monitor
-            print(f"SERIAL SENT: {serial_command.strip()} -> L_PWM:{left_pwm} R_PWM:{right_pwm}") 
+            # (Giảm log để đỡ spam console)
+            if command != "STOP":
+                 print(f"SERIAL SENT: {serial_command.strip()} -> L_PWM:{left_pwm} R_PWM:{right_pwm}")  
         except Exception as e:
             print(f"Serial write error: {e}")
     else:
@@ -115,25 +113,9 @@ def toggle_light_relay(new_state):
         except Exception as e:
             print(f"Serial write error: {e}")
 
-# (Tạm tắt Gesture)
+# (TAm tắt Gesture)
 # def count_fingers(hand_landmarks):
-#     """ Counts the number of extended fingers from MediaPipe landmarks. (Logic unchanged)"""
-#     finger_count = 0
-#     tip_ids = [mp_hands.HandLandmark.THUMB_TIP, mp_hands.HandLandmark.INDEX_FINGER_TIP,
-#                mp_hands.HandLandmark.MIDDLE_FINGER_TIP, mp_hands.HandLandmark.RING_FINGER_TIP,
-#                mp_hands.HandLandmark.PINKY_TIP]
-#     pip_ids = [mp_hands.HandLandmark.THUMB_IP, mp_hands.HandLandmark.INDEX_FINGER_PIP,
-#                mp_hands.HandLandmark.MIDDLE_FINGER_PIP, mp_hands.HandLandmark.RING_FINGER_PIP,
-#                mp_hands.HandLandmark.PINKY_PIP]
-#     
-#     # Thumb (check X-axis)
-#     if hand_landmarks.landmark[tip_ids[0]].x < hand_landmarks.landmark[pip_ids[0]].x:
-#         finger_count += 1
-#     # Other 4 fingers (check Y-axis)
-#     for i in range(1, 5):
-#         if hand_landmarks.landmark[tip_ids[i]].y < hand_landmarks.landmark[pip_ids[i]].y:
-#             finger_count += 1
-#     return finger_count
+#     ... (logic)
 
 # --- 6. Main Robot Logic Thread ---
 def serial_read_thread():
@@ -151,7 +133,7 @@ def serial_read_thread():
                 line = ser.readline().decode('utf-8', errors='ignore').strip()
                 if line:
                     # Log the response received from ESP32
-                    print(f"ESP32 RESPONSE: {line}") 
+                    print(f"ESP32 RESPONSE: {line}")  
             time.sleep(0.01) # Small delay to prevent high CPU usage
         except Exception as e:
             print(f"Error reading from serial: {e}")
@@ -165,6 +147,13 @@ def robot_logic_thread():
 
     # Initialize Camera
     cap = cv2.VideoCapture(0)
+    
+    # *** OPTIMIZATION 1: Set smaller camera resolution ***
+    # Yêu cầu camera chỉ cung cấp 640x480 thay vì 1080p hoặc 720p
+    # Giúp cap.read() nhanh hơn
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    
     success, img = cap.read()
     if not success:
         print("FATAL: Cannot read camera, check connection.")
@@ -178,16 +167,38 @@ def robot_logic_thread():
     prev_frame_time = 0
     print("Robot logic thread started...")
     
+    # --- Biến cho Tối ưu FPS ---
+    frame_count = 0
+    
+    # *** OPTIMIZATION 2: AI Skip-Frame settings ***
+    # Chỉ chạy AI (YOLO) mỗi 3 khung hình
+    AI_SKIP_FRAMES = 3  
+    # Gửi thông tin (FPS, state) qua socket mỗi 15 khung hình
+    INFO_SKIP_FRAMES = 15 
+    
+    # Lưu trữ lệnh AI cuối cùng. Robot sẽ tiếp tục chạy lệnh này
+    # ngay cả trong các khung hình "bỏ qua"
+    last_ai_command = "STOP"
+    # Lưu trữ bounding box cuối cùng để vẽ lên các khung hình bỏ qua
+    last_known_boxes = [] 
+    
+    # *** OPTIMIZATION 3: JPEG Quality settings ***
+    # Giảm chất lượng JPEG xuống 80% để tăng tốc cv2.imencode
+    # 75-85 là một mức cân bằng tốt
+    jpeg_quality = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+
+
     while True:
         success, image = cap.read()
         if not success:
             print("Camera read failed, skipping frame.")
             time.sleep(0.1)
             continue
-
+            
+        frame_count += 1
         image = cv2.flip(image, 1) # Flip camera horizontally
         # (Tạm tắt Gesture)
-        # image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # Convert for MediaPipe
+        # image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
         # Read shared variables safely
         with lock:
@@ -199,73 +210,73 @@ def robot_logic_thread():
         # (Tạm tắt Gesture)
         # current_gesture = None
         
-        # --- (Tạm tắt Gesture) Gesture Recognition (Timer Logic) ---
+        # --- (Tạm tắt Gesture) Gesture Recognition ---
         # if current_state != "MANUAL":
-        #     # (MediaPipe processing and state change logic remains the same)
-        #     # ... (Existing gesture logic here)
-        #     hand_results = hands.process(image_rgb)
-        #     if hand_results.multi_hand_landmarks:
-        #         for hand_landmarks in hand_results.multi_hand_landmarks:
-        #             mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-        #             fingers_up = count_fingers(hand_landmarks)
-        #             
-        #             if fingers_up >= 4: current_gesture = "OPEN_HAND"
-        #             elif fingers_up <= 1: current_gesture = "CLOSED_HAND"
-        # 
-        #     # State change timer
-        #     if current_gesture is None:
-        #         gesture_timer = 0
-        #         last_gesture_for_timer = None
-        #     else:
-        #         if last_gesture_for_timer != current_gesture:
-        #             gesture_timer = time.time() # Start timer
-        #             last_gesture_for_timer = current_gesture
-        #         else:
-        #             elapsed = time.time() - gesture_timer
-        #             if elapsed > GESTURE_HOLD_TIME:
-        #                 # Hold time complete, change state
-        #                 with lock:
-        #                     if current_gesture == "OPEN_HAND" and current_state == "IDLE":
-        #                         print("GESTURE: Activating FOLLOW mode")
-        #                         robot_state = "FOLLOWING"
-        #                     elif current_gesture == "CLOSED_HAND" and current_state == "FOLLOWING":
-        #                         print("GESTURE: Deactivating FOLLOW mode to IDLE")
-        #                         robot_state = "IDLE"
-        #                 gesture_timer = 0 # Reset timer
-        
-        # --- State Machine Logic (YOLO vẫn hoạt động) ---
+        #    ... (logic)
+
+        # --- State Machine Logic ---
         if current_state == "IDLE":
             hud_color = (0, 255, 255) # Yellow
             execute_robot_move("STOP") # Send STOP command (PWM 0,0)
+            last_ai_command = "STOP" # Đảm bảo lệnh AI cũng là STOP
+            last_known_boxes = []    # Xóa các box cũ
 
         elif current_state == "FOLLOWING":
-            hud_color = (0, 255, 0) # Green
-            # Run YOLO model
-            results = model.track(image, persist=True, classes=[0], verbose=False, imgsz=320, conf=0.5)
-            found_person = False
-            if results[0].boxes:
-                for box in results[0].boxes:
-                    found_person = True
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    centerX = (x1 + x2) / 2
-                    
-                    # AI movement command
-                    if centerX < ZONE_LEFT: execute_robot_move("LEFT")
-                    elif centerX > ZONE_RIGHT: execute_robot_move("RIGHT")
-                    else: execute_robot_move("FORWARD") # Maintain distance
-                    break # Chỉ bám theo 1 người
-            if not found_person:
-                execute_robot_move("STOP")
+            hud_color = (0, 250, 0) # Green
             
-            # Draw tracking zones
+            # *** OPTIMIZATION 2: Logic Skip-Frame ***
+            run_ai_this_frame = (frame_count % AI_SKIP_FRAMES == 0)
+
+            if run_ai_this_frame:
+                # --- CHỈ CHẠY AI NẶNG NỀ TRONG KHUNG HÌNH NÀY ---
+                results = model.track(image, persist=True, classes=[0], verbose=False, imgsz=320, conf=0.5)
+                found_person = False
+                
+                # Xóa các box cũ trước khi tìm box mới
+                last_known_boxes.clear() 
+                
+                if results[0].boxes:
+                    for box in results[0].boxes:
+                        found_person = True
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                        
+                        # Lưu box này để vẽ
+                        last_known_boxes.append((x1, y1, x2, y2))
+                        
+                        centerX = (x1 + x2) / 2
+                        
+                        # Xác định lệnh AI
+                        if centerX < ZONE_LEFT: 
+                            last_ai_command = "LEFT"
+                        elif centerX > ZONE_RIGHT: 
+                            last_ai_command = "RIGHT"
+                        else: 
+                            last_ai_command = "FORWARD"
+                        
+                        break # Chỉ bám theo 1 người
+                
+                if not found_person:
+                    last_ai_command = "STOP"
+            
+            # *** LUÔN LUÔN thực thi lệnh (ngay cả trên khung hình bỏ qua) ***
+            # Robot sẽ tiếp tục rẽ trái/phải/tiến ngay cả khi AI không chạy
+            # Điều này làm robot phản ứng mượt mà hơn
+            execute_robot_move(last_ai_command)
+            
+            # --- Vẽ HUD ---
+            # Vẽ các box đã lưu (từ khung hình AI gần nhất)
+            for (x1, y1, x2, y2) in last_known_boxes:
+                 cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+            # Vẽ tracking zones
             cv2.line(image, (int(ZONE_LEFT), 0), (int(ZONE_LEFT), FRAME_HEIGHT), (255, 0, 0), 2)
             cv2.line(image, (int(ZONE_RIGHT), 0), (int(ZONE_RIGHT), FRAME_HEIGHT), (255, 0, 0), 2)
 
         elif current_state == "MANUAL":
             hud_color = (255, 0, 0) # Blue
-            # Execute joystick command (sends corresponding PWM via Serial)
             execute_robot_move(current_manual_cmd) 
+            last_ai_command = "STOP" # Reset lệnh AI khi ở manual
+            last_known_boxes = []    # Xóa các box cũ
 
         # --- HUD & Frame Update ---
         new_frame_time = time.time()
@@ -282,18 +293,18 @@ def robot_logic_thread():
         
         # (Tạm tắt Gesture)
         # if gesture_timer > 0:
-        #     elapsed_time = time.time() - gesture_timer
-        #     remaining_time = max(0, GESTURE_HOLD_TIME - elapsed_time)
-        #     cv2.putText(image, f"Gesture: {remaining_time:.1f}s", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+        #    ... (logic)
 
-        # Emit info to all connected web clients
-        with lock:
-            current_light_state = light_state 
-        socketio.emit('robot_info', {'fps': int(fps), 'state': current_state, 'light': current_light_state})
+        # *** OPTIMIZATION 4: Giảm tần suất Socket.IO ***
+        if frame_count % INFO_SKIP_FRAMES == 0:
+            with lock:
+                current_light_state = light_state  
+            socketio.emit('robot_info', {'fps': int(fps), 'state': current_state, 'light': current_light_state})
 
         # Encode frame to JPEG and store in global variable for streaming
         with lock:
-            _, buffer = cv2.imencode('.jpg', image)
+            # *** OPTIMIZATION 3: Sử dụng chất lượng JPEG thấp hơn ***
+            _, buffer = cv2.imencode('.jpg', image, jpeg_quality)
             global_frame = buffer.tobytes()
 
 # --- 7. Flask HTTP Routes (Unchanged) ---
@@ -318,7 +329,7 @@ def video_feed():
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-# --- 8. Socket.IO Events ---
+# --- 8. Socket.IO Events (Unchanged) ---
 @socketio.on('connect')
 def handle_connect():
     """ Handles a new client connection. """
@@ -343,7 +354,7 @@ def handle_robot_command(data):
                 
         elif command == 'SET_MANUAL': robot_state = "MANUAL"
         elif command == 'SET_IDLE': robot_state = "IDLE"
-            
+                
         elif command.startswith('MANUAL_'):
             # This logic automatically handles new commands like 'MANUAL_FORWARD_LEFT'
             if robot_state == "MANUAL":
@@ -363,7 +374,7 @@ def handle_toggle_light():
         current_state = robot_state
     
     # Send Serial command to ESP32
-    toggle_light_relay(current_light_state) 
+    toggle_light_relay(current_light_state)  
     
     # Emit the new state to all clients
     emit('robot_info', {'fps': 0, 'state': current_state, 'light': current_light_state}, broadcast=True)
