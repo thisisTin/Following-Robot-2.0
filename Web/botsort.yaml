@@ -1,0 +1,25 @@
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# Cấu hình BoT-SORT tracker
+# Tracker này "kiên cường" hơn ByteTrack trong việc giữ ID khi bị che khuất
+# hoặc bị nhòe ảnh (motion blur), nhưng có thể chậm hơn một chút.
+
+tracker_type: 'botsort'
+with_reid: False
+# --- Ngưỡng (Thresholds) ---
+track_high_thresh: 0.5  # Ngưỡng tin cậy để BẮT ĐẦU theo dõi (giữ nguyên)
+track_low_thresh: 0.1   # Ngưỡng tin cậy để "giữ" một track (ngay cả khi điểm thấp)
+new_track_thresh: 0.6   # Ngưỡng tin cậy để tạo một track MỚI (nếu không khớp)
+
+# --- Bộ nhớ (Memory) ---
+track_buffer: 90        # <<< QUAN TRỌNG: "Trí nhớ" (số khung hình) để nhớ một ID đã mất.
+                        # Tăng lên 90 (từ 30) để giúp xử lý "motion blur".
+
+# --- Khớp (Matching) ---
+match_thresh: 0.7       # Ngưỡng IOU để khớp một phát hiện với một ID cũ.
+                        # (Giảm từ 0.8 xuống 0.7 để "dễ dãi" hơn)
+
+# --- Các tham số riêng của BoT-SORT ---
+# (Thường không cần Re-ID trên Pi vì quá nặng)
+proximity_thresh: 0.5
+appearance_thresh: 0.25
+cmc_method: 'sparseOptFlow'

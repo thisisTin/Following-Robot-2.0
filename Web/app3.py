@@ -37,22 +37,23 @@ light_state = False
 
 # --- Biến Lidar ---
 lidar = None
-MIN_SAFE_DISTANCE = 0.3 # (mét)
+MIN_SAFE_DISTANCE = 0.3# (mét)
 lidar_scan_data = {
-    'front_distance': float('inf') 
+    'front_distance': float('inf'),
+    'back_distance': float('inf') # <<< THAY ĐỔI: Thêm khoảng cách sau
 }
 
 # --- CÁC HẰNG SỐ ĐIỀU KHIỂN P-CONTROLLER (PID) ---
 # (Bạn CẦN tinh chỉnh các giá trị này)
 TARGET_AREA = 50000       # Diện tích box (pixel^2) mà robot cố gắng duy trì
-KP_DISTANCE = 0.005  # Hằng số P cho khoảng cách (Area)
-KP_TURN = 0.1        # Hằng số P cho rẽ (X)
+# (KP_DISTANCE đã được cập nhật từ 0.003 -> 0.004 để tăng tốc độ)
+KP_DISTANCE = 0.006       # Hằng số P cho khoảng cách (Area)
+KP_TURN = 0.1           # Hằng số P cho rẽ (X)
 
-MAX_FWD_SPEED = 200  # Tốc độ tiến/lùi tối đa (PWM)
-MAX_TURN_SPEED = 150 # Tốc độ rẽ tối đa (PWM)
+MAX_FWD_SPEED = 222       # Tốc độ tiến/lùi tối đa (PWM)
+MAX_TURN_SPEED = 140    # Tốc độ rẽ tối đa (PWM)
 
-# (THÊM TỪ BÀN VÁ TRƯỚC)
-MIN_MOVE_PWM = 200   # Ngưỡng PWM tối thiểu để motor chạy
+MIN_MOVE_PWM = 190       # Ngưỡng PWM tối thiểu để motor chạy
 
 # Serial Communication
 try:
@@ -79,16 +80,27 @@ def set_robot_pwm(left_pwm, right_pwm, intent=""):
 
     # --- 1. LOGIC LIDAR (PHANH AN TOÀN) ---
     current_front_distance = float('inf')
+    current_back_distance = float('inf') # <<< THAY ĐỔI
     with lock:
         current_front_distance = lidar_scan_data.get('front_distance', float('inf'))
+        current_back_distance = lidar_scan_data.get('back_distance', float('inf')) # <<< THAY ĐỔI
 
     is_moving_forward = left_pwm > 0 or right_pwm > 0
+    is_moving_backward = left_pwm < 0 or right_pwm < 0 # <<< THAY ĐỔI
 
+    # Kiểm tra va chạm TIẾN
     if is_moving_forward and current_front_distance < MIN_SAFE_DISTANCE:
-        print(f"LIDAR OVERRIDE: Obstacle detected at {current_front_distance:.2f}m! Stopping.")
+        print(f"LIDAR OVERRIDE (FRONT): Obstacle detected at {current_front_distance:.2f}m! Stopping.")
         left_pwm = 0  
         right_pwm = 0 
-        intent = f"LIDAR_STOP (was {intent})"
+        intent = f"LIDAR_STOP_FWD (was {intent})"
+    
+    # <<< THAY ĐỔI: Kiểm tra va chạm LÙI >>>
+    elif is_moving_backward and current_back_distance < MIN_SAFE_DISTANCE:
+        print(f"LIDAR OVERRIDE (BACK): Obstacle detected at {current_back_distance:.2f}m! Stopping.")
+        left_pwm = 0
+        right_pwm = 0
+        intent = f"LIDAR_STOP_BCK (was {intent})"
     
     # --- 2. LOGIC DEADZONE (VÙNG CHẾT MOTOR) ---
     def _boost_pwm(pwm_val):
@@ -126,9 +138,9 @@ def execute_robot_move(command, intent=""):
     """
     if intent == "": intent = command
 
-    SPEED = 210
+    SPEED = 190
     TURN_SPEED = 220
-    CURVE_SPEED_SLOW = int(SPEED * 0.65)  
+    CURVE_SPEED_SLOW = int(SPEED * 0.5)  
     CURVE_SPEED_FAST = SPEED
     
     cmd_map = {
@@ -187,18 +199,34 @@ def lidar_logic_thread():
         
         for scan in lidar.iter_scans(scan_type='normal', min_len=100):
             front_distance_mm = float('inf')
+            back_distance_mm = float('inf') # <<< THAY ĐỔI
             
             for quality, angle, distance in scan:
+                # --- Cung phía trước (0-15 & 345-360) ---
                 if (0 <= angle <= 15) or (345 <= angle <= 360):
                     if distance > 0: 
                         if distance < front_distance_mm:
                             front_distance_mm = distance
+                
+                # <<< THAY ĐỔI: Cung phía sau (165-195) >>>
+                if (165 <= angle <= 195):
+                    if distance > 0:
+                        if distance < back_distance_mm:
+                            back_distance_mm = distance
             
             with lock:
+                # Cập nhật khoảng cách trước
                 if front_distance_mm == float('inf'):
                     lidar_scan_data['front_distance'] = float('inf') 
                 else:
                     lidar_scan_data['front_distance'] = front_distance_mm / 1000.0
+                
+                # <<< THAY ĐỔI: Cập nhật khoảng cách sau >>>
+                if back_distance_mm == float('inf'):
+                    lidar_scan_data['back_distance'] = float('inf')
+                else:
+                    lidar_scan_data['back_distance'] = back_distance_mm / 1000.0
+            
             time.sleep(0.01) 
 
     except Exception as e:
@@ -228,7 +256,8 @@ def robot_logic_thread():
     print("Robot logic thread started...")
     
     frame_count = 0
-    AI_SKIP_FRAMES = 3  
+    # (Đã sửa lỗi mất dấu)
+    AI_SKIP_FRAMES = 1  # Chạy AI mỗi 2 khung hình để tăng độ ổn định
     INFO_SKIP_FRAMES = 15 
     
     # Biến lưu trữ P-Controller
@@ -272,12 +301,16 @@ def robot_logic_thread():
             hud_color = (255, 0, 0) # Blue
             
             if run_ai_this_frame:
-                results = model.track(image, persist=True, classes=[0], verbose=False, imgsz=320, conf=0.5, tracker="bytetrack.yaml")
+                results = model.track(image, persist=True, classes=[0], verbose=False, imgsz=320, conf=0.3, tracker="botsort.yaml")
                 if results[0].boxes and results[0].boxes.id is not None:
                     for box in results[0].boxes:
                         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                         box_id = int(box.id[0])
                         
+                        # (THÊM ĐỂ DEBUG) Tính và in ra diện tích box
+                        box_area = (x2 - x1) * (y2 - y1)
+                        print(f"DEBUG (Manual): ID {box_id} Area: {box_area:.0f}")
+
                         rect_list = [int(x1), int(y1), int(x2), int(y2)] # Sửa lỗi JSON
                         boxes_to_send.append({'id': box_id, 'rect': rect_list})
 
@@ -295,7 +328,7 @@ def robot_logic_thread():
             found_target_this_frame = False 
             
             if run_ai_this_frame:
-                results = model.track(image, persist=True, classes=[0], verbose=False, imgsz=320, conf=0.5, tracker="bytetrack.yaml")
+                results = model.track(image, persist=True, classes=[0], verbose=False, imgsz=320, conf=0.3, tracker="botsort.yaml")
                 
                 if results[0].boxes and results[0].boxes.id is not None:
                     for box in results[0].boxes:
@@ -313,9 +346,6 @@ def robot_logic_thread():
                             # --- CẬP NHẬT BIẾN P-CONTROLLER ---
                             last_known_centerX = (x1 + x2) / 2
                             last_known_area = (x2 - x1) * (y2 - y1)
-                            
-                            # (THÊM ĐỂ DEBUG) In ra diện tích
-                            print(f"DEBUG: Target Area: {last_known_area:.0f} (Target: {TARGET_AREA})")
                                 
                         else:
                             cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 255), 2)
@@ -328,6 +358,10 @@ def robot_logic_thread():
                 set_robot_pwm(0, 0, "STOP (Lost Target)")
                 hud_text = f"FOLLOWING (No Target)"
             else:
+                # (THÊM ĐỂ DEBUG)
+                if frame_count % INFO_SKIP_FRAMES == 0: # Chỉ in 1 lần / 15 frames
+                     print(f"DEBUG (Follow): Area: {last_known_area:.0f} (Target: {TARGET_AREA})")
+
                 error_area = TARGET_AREA - last_known_area
                 fwd_speed = KP_DISTANCE * error_area
                 fwd_speed = clamp(fwd_speed, -MAX_FWD_SPEED, MAX_FWD_SPEED)

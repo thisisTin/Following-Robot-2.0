@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>ð Robot Operating Control Panel</title>
+    <title>🌍 Robot Operating Control Panel</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
     
     <style>
-        /* (CÃ¡c keyframes vÃ  style gá»c giá»¯ nguyÃªn) */
+        /* (Các keyframes và style gốc giữ nguyên) */
         @keyframes subtleGradient { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
         @keyframes pulseGreen { 0% { box-shadow: 0 0 3px #0f0; } 50% { box-shadow: 0 0 15px #0f0; } 100% { box-shadow: 0 0 3px #0f0; } }
         @keyframes pulseYellow { 0% { box-shadow: 0 0 3px #fa0; } 50% { box-shadow: 0 0 15px #fa0; } 100% { box-shadow: 0 0 3px #fa0; } }
@@ -52,12 +52,12 @@
             box-sizing: border-box;
         }
 
-        /* --- THAY Äá»I Lá»N --- */
-        /* Bá» img, thay báº±ng canvas */
+        /* --- THAY ĐỔI LỚN --- */
+        /* Bỏ img, thay bằng canvas */
         #video-canvas {
             cursor: pointer;
         }
-        /* --- Káº¾T THÃC THAY Äá»I --- */
+        /* --- KẾT THÚC THAY ĐỔI --- */
 
         #status-display {
             padding: 10px; background: rgba(0, 0, 0, 0.2);
@@ -129,7 +129,7 @@
 <body>
     <div class="container">
         <div class="video-container">
-            <!-- THAY THáº¾: Bá» <img>, dÃ¹ng <canvas> -->
+            <!-- THAY THẾ: Bỏ <img>, dùng <canvas> -->
             <canvas id="video-canvas"></canvas>
         </div>
         
@@ -140,24 +140,24 @@
             </div>
 
             <div class="mode-controls">
-                <!-- NÃºt Follow sáº½ ÄÆ°á»£c quáº£n lÃ½ báº±ng JS -->
+                <!-- Nút Follow sẽ được quản lý bằng JS -->
                 <button id="btn-follow">Follow</button> 
-                <!-- <button id="btn-manual">Manual</button> --> <!-- <<< THAY Äá»I: ÄÃ£ xÃ³a -->
-                <!-- <button id="btn-idle">Idle</button> --> <!-- <<< THAY Äá»I: ÄÃ£ xÃ³a -->
-                <button id="btn-light">Báº­t ÄÃ¨n</button>
+                <!-- <button id="btn-manual">Manual</button> --> <!-- <<< THAY ĐỔI: Đã xóa -->
+                <!-- <button id="btn-idle">Idle</button> --> <!-- <<< THAY ĐỔI: Đã xóa -->
+                <button id="btn-light">Bật Đèn</button>
             </div>
 
             <div class="joystick-area">
                 <div id="joystick-container"></div>
             </div>
-            <p style="text-align: center; margin:0; font-size: 0.8em;">Lá»nh: <b id="joystick-command">STOP</b></p>
+            <p style="text-align: center; margin:0; font-size: 0.8em;">Lệnh: <b id="joystick-command">STOP</b></p>
         </div>
     </div>
 
     <script>
         var socket = io.connect('http://' + document.domain + ':' + location.port);
         
-        // --- Láº¥y cÃ¡c pháº§n tá»­ ---
+        // --- Lấy các phần tử ---
         var statusDisplay = document.getElementById('status-display');
         var statusState = document.getElementById('status-state');
         var statusFps = document.getElementById('status-fps');
@@ -165,41 +165,41 @@
         var lightBtn = document.getElementById('btn-light');
         var joystickCommandDisplay = document.getElementById('joystick-command');
 
-        // --- CÃ€I Äáº¶T CANVAS Má»I ---
+        // --- CÀI ĐẶT CANVAS MỚI ---
         var canvas = document.getElementById('video-canvas');
         var ctx = canvas.getContext('2d', { alpha: false });
 
-        // Táº¡o má»t Äá»i tÆ°á»£ng Image Äá» nháº­n stream
+        // Tạo một đối tượng Image để nhận stream
         var videoStream = new Image();
         videoStream.src = "{{ url_for('video_feed') }}";
 
-        // Biáº¿n lÆ°u trá»¯ kÃ­ch thÆ°á»c video gá»c (tá»« Python)
+        // Biến lưu trữ kích thước video gốc (từ Python)
         var nativeVideoWidth = window ? window.innerWidth : 640; 
         var nativeVideoHeight = window ? window.innerHeight / 2 : 480;
 
-        // Äáº·t kÃ­ch thÆ°á»c buffer cá»§a canvas
+        // Đặt kích thước buffer của canvas
         canvas.width = 16 * nativeVideoHeight / 9;
         canvas.height = nativeVideoHeight;
         
-        // Biáº¿n lÆ°u trá»¯ danh sÃ¡ch box
+        // Biến lưu trữ danh sách box
         var currentBoxes = [];
         var currentTargetId = null;
 
-        // --- VÃ²ng láº·p Váº¼ (Render Loop) ---
+        // --- Vòng lặp VẼ (Render Loop) ---
         function renderLoop() {
             // 1. Clear canvas
             ctx.fillStyle = 'black';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // 2. Váº½ video stream
+            // 2. Vẽ video stream
             ctx.drawImage(videoStream, 0, 0, canvas.width, canvas.height);
 
-            // 3. Váº½ cÃ¡c bounding box
+            // 3. Vẽ các bounding box
             for (var box of currentBoxes) {
                 var rect = box.rect; // [x1, y1, x2, y2]
                 var id = box.id;
                 
-                // Chá»n mÃ u: Xanh lÃ¡ cho má»¥c tiÃªu, VÃ ng cho ngÆ°á»i khÃ¡c
+                // Chọn màu: Xanh lá cho mục tiêu, Vàng cho người khác
                 if (id === currentTargetId) {
                     ctx.strokeStyle = '#00FF00'; // Green (Target)
                     ctx.fillStyle = '#00FF00';
@@ -210,40 +210,40 @@
                     ctx.lineWidth = 2;
                 }
                 
-                // Váº½ box
+                // Vẽ box
                 ctx.strokeRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
                 
-                // Váº½ ID
+                // Vẽ ID
                 ctx.font = '16px Arial';
                 ctx.fillText('ID: ' + id, rect[0], rect[1] - 5);
             }
             
-            // YÃªu cáº§u váº½ khung hÃ¬nh tiáº¿p theo
+            // Yêu cầu vẽ khung hình tiếp theo
             requestAnimationFrame(renderLoop);
         }
 
-        // Báº¯t Äáº§u vÃ²ng láº·p khi video load
+        // Bắt đầu vòng lặp khi video load
         videoStream.onload = () => {
             requestAnimationFrame(renderLoop);
         };
 
 
-        // --- Xá»¬ LÃ CLICK Má»I TRÃN CANVAS ---
+        // --- XỬ LÝ CLICK MỚI TRÊN CANVAS ---
         canvas.addEventListener('click', function(evt) {
-            // Láº¥y vá» trÃ­ cá»§a canvas trÃªn trang
+            // Lấy vị trí của canvas trên trang
             var rect = canvas.getBoundingClientRect();
             
-            // TÃ­nh toÃ¡n tá»· lá» co giÃ£n cá»§a canvas (do CSS)
-            // (ChÃºng ta giáº£ Äá»nh canvas ÄÆ°á»£c co giÃ£n Äá» vá»«a vá»i container)
+            // Tính toán tỷ lệ co giãn của canvas (do CSS)
+            // (Chúng ta giả định canvas được co giãn để vừa với container)
             var scaleX = canvas.width / rect.width;
             var scaleY = canvas.height / rect.height;
 
-            // TÃ­nh tá»a Äá» click bÃªn trong buffer cá»§a canvas (640x480)
+            // Tính tọa độ click bên trong buffer của canvas (640x480)
             var canvasX = (evt.clientX - rect.left) * scaleX;
             var canvasY = (evt.clientY - rect.top) * scaleY;
 
             var foundTarget = null;
-            // Kiá»m tra xem cÃº click cÃ³ trÃºng box nÃ o khÃ´ng
+            // Kiểm tra xem cú click có trúng box nào không
             for (var box of currentBoxes) {
                 var r = box.rect; // [x1, y1, x2, y2]
                 if (canvasX >= r[0] && canvasX <= r[2] && canvasY >= r[1] && canvasY <= r[3]) {
@@ -253,7 +253,7 @@
             }
             
             if (foundTarget) {
-                // ÄÃ£ click trÃºng! Gá»­i ID vá» server
+                // Đã click trúng! Gửi ID về server
                 console.log('Clicked target ID:', foundTarget.id);
                 socket.emit('set_target_id', { id: foundTarget.id });
             } else {
@@ -262,7 +262,7 @@
         });
 
 
-        // --- Event Listener: Nháº­n thÃ´ng tin tá»« server (Cáº¬P NHáº¬T) ---
+        // --- Event Listener: Nhận thông tin từ server (CẬP NHẬT) ---
         socket.on('robot_info', function(data) {
             statusState.textContent = 'STATE: ' + data.state;
             statusFps.textContent = 'FPS: ' + data.fps;  
@@ -271,34 +271,34 @@
             currentTargetId = null; // Reset
 
             if (data.state === 'FOLLOWING') {
-                followBtn.textContent = 'Há»§y Theo DÃµi';
-                followBtn.className = 'stop'; // MÃ u Äá»
+                followBtn.textContent = 'Hủy Theo Dõi';
+                followBtn.className = 'stop'; // Màu đỏ
                 followBtn.disabled = false;
                 
-            } else { // <<< THAY Äá»I: Bao gá»m cáº£ MANUAL (tráº¡ng thÃ¡i máº·c Äá»nh má»i)
+            } else { // <<< THAY ĐỔI: Bao gồm cả MANUAL (trạng thái mặc định mới)
                 followBtn.textContent = 'Click Person to Follow';
                 if (data.state === 'MANUAL') {
-                    followBtn.textContent = 'Cháº¿ Äá» Manual';
+                    followBtn.textContent = 'Chế độ Manual';
                 }
                 followBtn.className = '';
-                followBtn.disabled = true; // VÃ´ hiá»u hÃ³a
+                followBtn.disabled = true; // Vô hiệu hóa
             }
 
-            // Cáº­p nháº­t nÃºt ÄÃ¨n (giá»¯ nguyÃªn)
+            // Cập nhật nút Đèn (giữ nguyên)
             if (data.light) {
-                lightBtn.textContent = 'Táº¯t ÄÃ¨n';
+                lightBtn.textContent = 'Tắt Đèn';
                 lightBtn.className = 'on';
             } else {
-                lightBtn.textContent = 'Báº­t ÄÃ¨n';
+                lightBtn.textContent = 'Bật Đèn';
                 lightBtn.className = '';
             }
         });
 
-        // --- Event Listener Má»I: Nháº­n danh sÃ¡ch box ---
+        // --- Event Listener MỚI: Nhận danh sách box ---
         socket.on('detected_boxes', function(data) {
             currentBoxes = data.boxes;
             
-            // TÃ¬m xem target_id cÃ³ cÃ²n trong danh sÃ¡ch khÃ´ng
+            // Tìm xem target_id có còn trong danh sách không
             var targetVisible = false;
             if (currentTargetId !== null) {
                 for(var box of currentBoxes) {
@@ -308,28 +308,28 @@
                     }
                 }
             }
-            // (Náº¿u khÃ´ng tháº¥y target, cÃ³ thá» cáº­p nháº­t HUD)
+            // (Nếu không thấy target, có thể cập nhật HUD)
         });
 
-        // --- Event Listener Má»I: Nháº­n ID má»¥c tiÃªu ÄÃ£ xÃ¡c nháº­n ---
-        // (ChÃºng ta cáº§n server xÃ¡c nháº­n ID Äá» lÆ°u láº¡i)
+        // --- Event Listener MỚI: Nhận ID mục tiêu đã xác nhận ---
+        // (Chúng ta cần server xác nhận ID để lưu lại)
         socket.on('target_acquired', function(data) {
             currentTargetId = data.id;
         });
-        // Sá»­a: Dá»±a vÃ o logic trong robot_info lÃ  Äá»§
+        // Sửa: Dựa vào logic trong robot_info là đủ
 
-        // --- Event Listeners: Gá»­i lá»nh (Cáº¬P NHáº¬T) ---
+        // --- Event Listeners: Gửi lệnh (CẬP NHẬT) ---
         followBtn.onclick = () => {
-            // NÃºt nÃ y giá» CHá» dÃ¹ng Äá» Há»¦Y
+            // Nút này giờ CHỈ dùng để HỦY
             if (statusDisplay.className === 'following') {
                 socket.emit('cancel_target');
             }
         };
-        // document.getElementById('btn-manual').onclick = () => socket.emit('robot_command', { command: 'SET_MANUAL' }); // <<< THAY Äá»I: ÄÃ£ xÃ³a
-        // document.getElementById('btn-idle').onclick = () => socket.emit('robot_command', { command: 'SET_IDLE' }); // <<< THAY Äá»I: ÄÃ£ xÃ³a
+        // document.getElementById('btn-manual').onclick = () => socket.emit('robot_command', { command: 'SET_MANUAL' }); // <<< THAY ĐỔI: Đã xóa
+        // document.getElementById('btn-idle').onclick = () => socket.emit('robot_command', { command: 'SET_IDLE' }); // <<< THAY ĐỔI: Đã xóa
         lightBtn.onclick = () => socket.emit('toggle_light');
 
-        // --- Joystick Initialization (Giá»¯ nguyÃªn) ---
+        // --- Joystick Initialization (Giữ nguyên) ---
         var joystickContainer = document.getElementById('joystick-container');
         var currentManualCommand = "STOP";
         var joystick = nipplejs.create({
@@ -349,7 +349,7 @@
             }
         }
 
-        // Joystick 8-Way move logic (Giá»¯ nguyÃªn)
+        // Joystick 8-Way move logic (Giữ nguyên)
         joystick.on('move', function (evt, data) {
             var angle = data.angle.degree;
             var commandToSend = "STOP"; 

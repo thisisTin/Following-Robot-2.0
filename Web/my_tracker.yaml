@@ -1,0 +1,18 @@
+# Ultralytics YOLO ??, AGPL-3.0 license
+# ByteTrack tracker settings - ÐÃ BAO G?M C?U HÌNH C?A B?N
+
+tracker_type: bytetrack
+
+# --- CÁC THAY Ð?I C?A B?N ---
+track_high_thresh: 0.54  
+track_low_thresh: 0.14   
+new_track_thresh: 0.82     # <<< ÐÃ THAY Ð?I (t? 0.6)
+track_buffer: 150          # <<< ÐÃ THAY Ð?I (t? 30)
+match_thresh: 0.8         # <<< ÐÃ THAY Ð?I (t? 0.8)
+
+# --- CÁC TRU?NG B?T BU?C (ÐÃ B? THI?U TRU?C ÐÓ) ---
+gmc_method: sparseOptFlow # GMC method
+proximity_thresh: 0.6   # Proximity threshold
+appearance_thresh: 0.35 # Appearance threshold
+with_reid: true        # Whether to use Re-ID
+fuse_score: false       # <<< ÐÂY LÀ DÒNG GÂY L?I

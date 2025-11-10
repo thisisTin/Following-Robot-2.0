@@ -1,0 +1,75 @@
+(venv) huynhloc@raspberrypi:~/carfollow $ python app4.py
+Loading AI Models...
+Models loaded successfully.
+Serial Port /dev/ttyUSB1 opened successfully at 9600 baud.
+Starting Robot Thread...
+Serial reading thread started...
+Starting Lidar Thread...
+Connecting to Lidar...
+Starting Web Server at http://0.0.0.0:5001
+ * Serving Flask app 'app4'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://192.168.137.67:5001
+Press CTRL+C to quit
+Lidar connected successfully.
+Error connecting or reading Lidar: too many values to unpack (expected 2)
+Stopping Lidar...
+Robot logic thread started...
+ESP32 RESPONSE: ROBOT_PWM:0:0
+ESP32 RESPONSE: OK:MOVE
+Exception in thread Thread-1 (robot_logic_thread):
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/threading.py", line 1043, in _bootstrap_inner
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib/python3.13/threading.py", line 994, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/huynhloc/carfollow/app4.py", line 318, in robot_logic_thread
+    results = model.track(image, persist=True, classes=[0], verbose=False, imgsz=320, conf=0.5, tracker="sorting.yaml")
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/engine/model.py", line 583, in track
+    return self.predict(source=source, stream=stream, **kwargs)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/engine/model.py", line 540, in predict
+    return self.predictor.predict_cli(source=source) if is_cli else self.predictor(source=source, stream=stream)
+                                                                    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/engine/predictor.py", line 225, in __call__
+    return list(self.stream_inference(source, model, *args, **kwargs))  # merge list of Result into one
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/torch/utils/_contextlib.py", line 38, in generator_context
+    response = gen.send(None)
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/engine/predictor.py", line 317, in stream_inference
+    self.run_callbacks("on_predict_start")
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/engine/predictor.py", line 502, in run_callbacks
+    callback(self)
+    ~~~~~~~~^^^^^^
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/trackers/track.py", line 63, in on_predict_start
+    tracker = TRACKER_MAP[cfg.tracker_type](args=cfg, frame_rate=30)
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/trackers/bot_sort.py", line 202, in __init__
+    else ReID(args.model)
+         ~~~~^^^^^^^^^^^^
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/trackers/bot_sort.py", line 259, in __init__
+    self.model = YOLO(model)
+                 ~~~~^^^^^^^
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/models/yolo/model.py", line 81, in __init__
+    super().__init__(model=model, task=task, verbose=verbose)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/engine/model.py", line 149, in __init__
+    self._load(model, task=task)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/engine/model.py", line 293, in _load
+    weights = checks.check_file(weights)  # runs in all cases, not redundant with above call
+  File "/home/huynhloc/carfollow/venv/lib/python3.13/site-packages/ultralytics/utils/checks.py", line 580, in check_file
+    raise FileNotFoundError(f"'{file}' does not exist")
+FileNotFoundError: 'osnet_x0_25' does not exist
+192.168.137.125 - - [10/Nov/2025 05:57:50] "GET /socket.io/?EIO=4&transport=polling&t=Pfgrmfl HTTP/1.1" 200 -
+Client connected!
+192.168.137.125 - - [10/Nov/2025 05:57:50] "POST /socket.io/?EIO=4&transport=polling&t=PfgrmhF&sid=Sdv_9KdtXqcqiq9cAAAA HTTP/1.1" 200 -
+192.168.137.125 - - [10/Nov/2025 05:57:50] "GET /socket.io/?EIO=4&transport=polling&t=PfgrmhF.0&sid=Sdv_9KdtXqcqiq9cAAAA HTTP/1.1" 200 -
+192.168.137.1 - - [10/Nov/2025 05:57:51] "GET /socket.io/?EIO=4&transport=polling&t=Pfgrn1V HTTP/1.1" 200 -
+Client connected!
+192.168.137.1 - - [10/Nov/2025 05:57:51] "POST /socket.io/?EIO=4&transport=polling&t=Pfgrn1z&sid=AGMkCWIElXn91xccAAAC HTTP/1.1" 200 -
+192.168.137.1 - - [10/Nov/2025 05:57:51] "GET /socket.io/?EIO=4&transport=polling&t=Pfgrn1-&sid=AGMkCWIElXn91xccAAAC HTTP/1.1" 200 -
