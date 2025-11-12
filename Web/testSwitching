@@ -1,0 +1,244 @@
+import cv2
+import numpy as np
+from ultralytics import YOLO
+import time
+
+# --- (TODO 1: CHỈNH SỬA CẤU HÌNH CỦA BẠN) ---
+
+# 1. Đường dẫn đến model YOLO của bạn
+YOLO_MODEL_PATH = "yolov8n.pt" 
+
+# 2. ID của camera (0 thường là webcam laptop)
+CAMERA_ID = 0
+
+# 3. ID của class bạn muốn bám (0 là 'person' trong COCO)
+TARGET_CLASS_ID = 0 
+
+# 4. Ngưỡng tin cậy (confidence) để chấp nhận 1 detection
+CONF_THRESHOLD = 0.5 
+
+# 5. Kích thước frame (nên để thấp để YOLO chạy nhanh hơn)
+FRAME_WIDTH = 640
+FRAME_HEIGHT = 480
+FRAME_CENTER_X = FRAME_WIDTH // 2
+
+# 6. Sau bao nhiêu frame TRONG KHI TRACKING thì chạy lại YOLO để hiệu chỉnh?
+RE_DETECT_INTERVAL = 30 
+
+# --- (HẾT TODO 1) ---
+
+
+# --- Biến quản lý trạng thái toàn cục ---
+STATE = "SEARCHING"     # Trạng thái hiện tại: "SEARCHING" hoặc "TRACKING"
+tracker = None          # Đối tượng tracker (ví dụ: CSRT)
+frame_counter = 0       # Bộ đếm frame để biết khi nào cần re-detect
+
+# -----------------------------------------------------------------
+# --- CÁC HÀM XỬ LÝ ---
+# -----------------------------------------------------------------
+
+def load_yolo_model():
+    """Tải model YOLO (Ultralytics)"""
+    try:
+        model = YOLO(YOLO_MODEL_PATH)
+        print(f"Đã tải xong model YOLO từ: {YOLO_MODEL_PATH}")
+        # Chạy 1 lần predict "nháp" để khởi động model
+        model.predict(np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3)), verbose=False)
+        print("Model YOLO đã được khởi động.")
+        return model
+    except Exception as e:
+        print(f"!!! LỖI NGHIÊM TRỌNG khi tải model YOLO: {e}")
+        print("Hãy đảm bảo bạn đã cài 'ultralytics' và đường dẫn model là đúng.")
+        exit()
+
+def run_yolo_detector(frame, model):
+    """
+    Chạy YOLO trên 1 frame và trả về 1 bbox (x, y, w, h)
+    của mục tiêu tốt nhất (to nhất), hoặc None.
+    """
+    print("  [YOLO] Đang chạy phát hiện (nặng)...")
+    results = model.predict(frame, conf=CONF_THRESHOLD, classes=[TARGET_CLASS_ID], verbose=False)
+    
+    best_box = None
+    max_area = 0
+    
+    for res in results:
+        for box in res.boxes:
+            if box.cls == TARGET_CLASS_ID:
+                # Chuyển từ tensor sang numpy
+                xyxy = box.xyxy[0].cpu().numpy()
+                (x1, y1, x2, y2) = (int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3]))
+                
+                # Chuyển từ (x1, y1, x2, y2) sang (x, y, w, h)
+                w, h = x2 - x1, y2 - y1
+                x, y = x1, y1
+                area = w * h
+                
+                # Lọc lấy box to nhất
+                if area > max_area:
+                    max_area = area
+                    best_box = (x, y, w, h) # Định dạng (x, y, w, h)
+                    
+    return best_box # Trả về (x, y, w, h) hoặc None
+
+def run_pid_simulation(bbox):
+    """
+    (SIMULATE) Hàm này nhận bbox từ TRACKER, tính toán PID
+    và IN ra lệnh PWM giả lập.
+    """
+    (x, y, w, h) = (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
+    
+    # 1. Tính tâm mục tiêu
+    target_center_x = x + (w // 2)
+    
+    # 2. Tính độ lệch (error)
+    error = target_center_x - FRAME_CENTER_X
+    
+    # 3. Cập nhật PID (Giả lập Kp=0.1)
+    correction = error * 0.1 
+    
+    # 4. Tính toán PWM (Giả lập)
+    base_speed = 150 # Tốc độ cơ sở
+    L_PWM = base_speed - correction
+    R_PWM = base_speed + correction
+    
+    # Kẹp giá trị PWM trong khoảng 0-255
+    L_PWM = max(0, min(255, L_PWM))
+    R_PWM = max(0, min(255, R_PWM))
+    
+    print(f"  [PID SIM] Error: {error:4.0f} -> PWM L/R: {L_PWM:3.0f}/{R_PWM:3.0f}")
+
+def stop_motors_simulation():
+    """ (SIMULATE) Hàm này dừng robot."""
+    print("  [MOTOR SIM] Đang dừng (PWM 0/0)")
+
+# -----------------------------------------------------------------
+# --- THIẾT LẬP CAMERA VÀ MODEL ---
+# -----------------------------------------------------------------
+
+yolo_model = load_yolo_model()
+
+cap = cv2.VideoCapture(CAMERA_ID)
+if not cap.isOpened():
+    print(f"!!! LỖI: Không thể mở camera ID {CAMERA_ID}.")
+    print("Thử đổi CAMERA_ID thành 0 hoặc 1.")
+    exit()
+
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+print(f"Đã mở camera ID {CAMERA_ID} với kích thước {FRAME_WIDTH}x{FRAME_HEIGHT}.")
+
+print("\n--- Bắt đầu hệ thống ---")
+print("Trạng thái ban đầu: SEARCHING (Bấm 'q' để thoát)")
+
+# -----------------------------------------------------------------
+# --- VÒNG LẶP CHÍNH (LOGIC STATE MACHINE) ---
+# -----------------------------------------------------------------
+
+while True:
+    # 1. Đọc frame từ camera
+    ret, frame = cap.read()
+    if not ret:
+        print("Lỗi đọc frame, đang thoát...")
+        break
+    
+    # Lật frame (webcam thường bị ngược)
+    frame = cv2.flip(frame, 1)
+    
+    start_time = time.time() # Đo FPS
+
+    # -----------------------------------------------------
+    # TRẠNG THÁI 1: TÌM KIẾM (DÙNG YOLO)
+    # -----------------------------------------------------
+    if STATE == "SEARCHING":
+        cv2.putText(frame, "STATE: SEARCHING (YOLO)", (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        
+        # Chạy YOLO (nặng)
+        bbox_yolo = run_yolo_detector(frame, yolo_model)
+        
+        if bbox_yolo is not None:
+            # TÌM THẤY!
+            print(f"[YOLO] Đã tìm thấy mục tiêu tại {bbox_yolo}. Khởi tạo Tracker.")
+            
+            # Tạo tracker CSRT
+            tracker = cv2.TrackerCSRT_create()
+            tracker.init(frame, bbox_yolo)
+            
+            # Chuyển trạng thái
+            STATE = "TRACKING"
+            frame_counter = 0 # Reset bộ đếm
+            print("  -> Chuyển sang [STATE: TRACKING]")
+        else:
+            # Không tìm thấy, robot dừng lại
+            stop_motors_simulation()
+
+    # -----------------------------------------------------
+    # TRẠNG THÁI 2: BÁM ĐUỔI (DÙNG TRACKER)
+    # -----------------------------------------------------
+    elif STATE == "TRACKING":
+        frame_counter += 1
+        
+        # Chạy tracker (siêu nhẹ)
+        success, bbox_tracker = tracker.update(frame)
+        
+        if success:
+            # TRACKER VẪN BÁM ĐƯỢC
+            cv2.putText(frame, f"STATE: TRACKING (Tracker)", (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            
+            # -> Dùng vị trí này để cấp cho PID (MƯỢT MÀ)
+            run_pid_simulation(bbox_tracker)
+            
+            # Vẽ bbox của tracker
+            (x, y, w, h) = (int(bbox_tracker[0]), int(bbox_tracker[1]), int(bbox_tracker[2]), int(bbox_tracker[3]))
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.circle(frame, (x + w//2, y + h//2), 5, (0, 255, 0), -1)
+
+            # Logic hiệu chỉnh (Re-detection)
+            if frame_counter % RE_DETECT_INTERVAL == 0:
+                print(f"  [Correct] Đã đến frame {frame_counter}. Chạy YOLO để hiệu chỉnh...")
+                bbox_yolo = run_yolo_detector(frame, yolo_model)
+                
+                if bbox_yolo is not None:
+                    print("  [Correct] YOLO xác nhận lại. Reset tracker về vị trí mới.")
+                    # Reset tracker với vị trí MỚI NHẤT từ YOLO
+                    tracker = cv2.TrackerCSRT_create()
+                    tracker.init(frame, bbox_yolo)
+                else:
+                    print("  [Correct] YOLO không thấy (lag/mờ), tracker tiếp tục bám.")
+                    # Không làm gì cả, cứ để tracker cũ chạy tiếp
+
+        else:
+            # TRACKER BỊ MẤT DẤU
+            print(f"[TRACKER] !!! TRACKER ĐÃ MẤT DẤU !!!")
+            
+            tracker = None
+            STATE = "SEARCHING"
+            print("  -> Chuyển về [STATE: SEARCHING]")
+            stop_motors_simulation()
+
+    # -----------------------------------------------------
+    # HIỂN THỊ FPS VÀ FRAME
+    # -----------------------------------------------------
+    
+    # Tính toán và hiển thị FPS
+    end_time = time.time()
+    fps = 1 / (end_time - start_time + 1e-6) # Thêm 1e-6 để tránh chia cho 0
+    cv2.putText(frame, f"FPS: {fps:.1f}", (FRAME_WIDTH - 120, 30), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+    
+    # Vẽ đường tâm để tham khảo
+    cv2.line(frame, (FRAME_CENTER_X, 0), (FRAME_CENTER_X, FRAME_HEIGHT), (255, 255, 0), 1)
+    
+    cv2.imshow("Test Local (YOLO + Tracker) - Bam 'q' de thoat", frame)
+    
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
+        print("Đã bấm 'q', đang thoát...")
+        break
+
+# --- Dọn dẹp ---
+cap.release()
+cv2.destroyAllWindows()
+print("Đã đóng camera và cửa sổ. Kết thúc.")

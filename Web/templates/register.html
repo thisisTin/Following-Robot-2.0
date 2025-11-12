@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Đăng ký khuôn mặt</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        /* --- General Styles & Dark Mode --- */
+        html, body {
+            font-family: 'Roboto', sans-serif; /* Roboto là font phổ biến trong các giao diện công nghiệp */
+            background: #1a1a1a; /* Nền tối hơn */
+            color: #e0e0e0;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start; /* Căn trên cùng */
+            min-height: 100vh;
+            margin: 0;
+            padding: 25px;
+            box-sizing: border-box;
+            line-height: 1.6;
+        }
+
+        /* --- Main Container --- */
+        .container {
+            background: #282828; /* Nền container hơi sáng hơn background */
+            padding: 2.5rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 255, 0, 0.1); /* Shadow xanh lá nhẹ */
+            border: 1px solid #3a3a3a; /* Viền tinh tế */
+            max-width: 550px;
+            width: 100%;
+            box-sizing: border-box;
+            animation: fadeIn 0.8s ease-out; /* Hiệu ứng fade-in khi tải trang */
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        h1 {
+            color: #00ff00; /* Xanh lá sáng làm tiêu đề */
+            text-align: center;
+            margin-top: 0;
+            margin-bottom: 1.8rem;
+            font-weight: 700;
+            font-size: 2.2em;
+            letter-spacing: 0.05em; /* Khoảng cách chữ */
+            border-bottom: 2px solid #006400; /* Đường kẻ dưới tiêu đề */
+            padding-bottom: 1rem;
+            text-shadow: 0 0 8px rgba(0, 255, 0, 0.4); /* Hiệu ứng neon nhẹ */
+        }
+
+        p.info-text {
+            font-size: 0.9em;
+            color: #b0b0b0;
+            text-align: center;
+            margin-bottom: 1.5rem;
+            border: 1px dashed #444;
+            padding: 0.8rem;
+            border-radius: 8px;
+            background: #333;
+        }
+
+        /* --- Camera Feed & Preview --- */
+        .camera-section {
+            position: relative;
+            background: #000;
+            border: 2px solid #006400; /* Viền xanh lá đậm cho camera */
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.3); /* Shadow nổi bật */
+        }
+        video {
+            display: block;
+            width: 100%;
+            height: auto;
+            transform: scaleX(-1); /* Lật ngang video để giống gương */
+            object-fit: cover;
+            min-height: 280px;
+        }
+        canvas { display: none; }
+        
+        #photo-preview {
+            position: absolute; /* Đặt ảnh preview lên trên video */
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            max-width: 80%;
+            max-height: 80%;
+            border: 3px solid #00ff00;
+            border-radius: 8px;
+            display: none;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+            z-index: 10;
+        }
+
+        /* --- Input Fields --- */
+        .input-group {
+            margin-bottom: 1.2rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #00ff00; /* Nhãn màu xanh lá */
+            font-weight: 500;
+            font-size: 0.95em;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 15px;
+            box-sizing: border-box;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: #333;
+            color: #e0e0e0;
+            font-size: 1em;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #00ff00;
+            box-shadow: 0 0 0 3px rgba(0, 255, 0, 0.2);
+            background: #3a3a3a;
+        }
+        /* Placeholder styling */
+        input::placeholder {
+            color: #888;
+            font-style: italic;
+        }
+
+        /* --- Buttons --- */
+        button {
+            width: 100%;
+            padding: 14px;
+            font-size: 1.1em;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 1rem;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px; /* Khoảng cách giữa icon và text */
+        }
+        button i {
+            font-size: 1.2em;
+        }
+        
+        #capture-btn {
+            background: #008000; /* Xanh lá đậm */
+            color: white;
+            box-shadow: 0 4px 15px rgba(0, 128, 0, 0.4);
+        }
+        #capture-btn:hover {
+            background: #00b300; /* Xanh lá sáng hơn khi hover */
+            box-shadow: 0 6px 20px rgba(0, 179, 0, 0.5);
+            transform: translateY(-2px);
+        }
+
+        #register-btn {
+            background: #006400; /* Xanh lá trung bình */
+            color: white;
+            box-shadow: 0 4px 15px rgba(0, 100, 0, 0.4);
+        }
+        #register-btn:hover:not(:disabled) {
+            background: #008000;
+            box-shadow: 0 6px 20px rgba(0, 128, 0, 0.5);
+            transform: translateY(-2px);
+        }
+        #register-btn:disabled {
+            background: #444;
+            color: #888;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+
+        /* --- Status Message --- */
+        #status-message {
+            margin-top: 1.5rem;
+            padding: 0.8rem;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 1em;
+            font-weight: 500;
+            animation: slideInUp 0.5s ease-out;
+        }
+        @keyframes slideInUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .success { 
+            background: rgba(0, 128, 0, 0.2); 
+            color: #00ff00; 
+            border: 1px solid #006400;
+        }
+        .error { 
+            background: rgba(255, 0, 0, 0.2); 
+            color: #ff3333; 
+            border: 1px solid #cc0000;
+        }
+
+        /* --- Responsive Design (Mobile) --- */
+        @media (max-width: 600px) {
+            .container {
+                padding: 1.5rem;
+                border-radius: 8px;
+            }
+            h1 {
+                font-size: 1.8em;
+                margin-bottom: 1.2rem;
+            }
+            p.info-text {
+                font-size: 0.85em;
+                padding: 0.6rem;
+            }
+            button {
+                padding: 12px;
+                font-size: 1em;
+            }
+            input[type="text"] {
+                padding: 10px 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Đăng ký khuôn mặt</h1>
+        <p class="info-text">
+            Để tăng độ chính xác nhận diện, vui lòng chụp nhiều ảnh ở các góc khác nhau (chính diện, nghiêng trái, nghiêng phải, hơi ngẩng, hơi cúi) dưới các điều kiện ánh sáng khác nhau.
+            Hãy chụp ít nhất 20 ảnh ở mỗi người
+        </p>
+        
+        <div class="camera-section">
+            <video id="webcam" autoplay playsinline></video>
+            <canvas id="snapshot"></canvas>
+            <img id="photo-preview" src="" alt="Ảnh đã chụp">
+        </div>
+        
+        <button id="capture-btn">
+            <i class="fas fa-camera"></i> 1. Chụp ảnh
+        </button>
+        
+        <div class="input-group">
+            <label for="name-input"><i class="fas fa-user"></i> Tên sinh viên:</label>
+            <input type="text" id="name-input" placeholder="Ví dụ: Trần Văn Tín">
+        </div>
+        
+        <div class="input-group">
+            <label for="id-input"><i class="fas fa-id-card"></i> Mã sinh viên:</label>
+            <input type="text" id="id-input" placeholder="Ví dụ: NV123">
+        </div>
+        
+        <button id="register-btn" disabled>
+            <i class="fas fa-save"></i> 2. Đăng ký ảnh này lên hệ thống
+        </button>
+        
+        <p id="status-message"></p>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('snapshot');
+        const ctx = canvas.getContext('2d');
+        const captureBtn = document.getElementById('capture-btn');
+        const registerBtn = document.getElementById('register-btn');
+        const nameInput = document.getElementById('name-input');
+        const idInput = document.getElementById('id-input');
+        const statusMsg = document.getElementById('status-message');
+        const preview = document.getElementById('photo-preview');
+
+        let capturedImageData = null;
+
+        // Khởi động webcam
+        // `playsinline` quan trọng cho mobile iOS
+        navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } })
+            .then(stream => {
+                video.srcObject = stream;
+                // Đợi video meta-data tải xong để lấy kích thước thực
+                video.onloadedmetadata = () => {
+                    video.play();
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                };
+            })
+            .catch(err => {
+                console.error("Lỗi webcam: ", err);
+                statusMsg.className = 'error';
+                statusMsg.innerText = "Lỗi: Không thể truy cập webcam. Vui lòng cấp quyền camera và đảm bảo không có ứng dụng nào khác đang sử dụng.";
+            });
+
+        captureBtn.onclick = () => {
+            if (!video.srcObject) {
+                statusMsg.className = 'error';
+                statusMsg.innerText = "Lỗi: Webcam chưa sẵn sàng.";
+                return;
+            }
+            // Vẽ khung hình hiện tại từ video lên canvas (ẩn)
+            // Lật ảnh trên canvas để nó không bị lật ngược khi chụp
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
+
+            // Lấy dữ liệu ảnh từ canvas (dưới dạng Base64)
+            capturedImageData = canvas.toDataURL('image/jpeg', 0.9); // Chất lượng 90%
+            
+            // Hiển thị ảnh xem trước
+            preview.src = capturedImageData;
+            preview.style.display = 'block';
+
+            // Kích hoạt nút "Đăng ký"
+            registerBtn.disabled = false;
+        };
+
+        registerBtn.onclick = async () => {
+            const name = nameInput.value.trim(); // Trim khoảng trắng
+            const employeeId = idInput.value.trim(); // Trim khoảng trắng
+
+            if (!name || !employeeId) {
+                statusMsg.className = 'error';
+                statusMsg.innerText = "Lỗi: Vui lòng nhập cả Tên và Mã Nhân Viên.";
+                return;
+            }
+            if (!capturedImageData) {
+                statusMsg.className = 'error';
+                statusMsg.innerText = "Lỗi: Vui lòng chụp ảnh trước.";
+                return;
+            }
+
+            statusMsg.className = '';
+            statusMsg.innerText = "Đang xử lý, vui lòng đợi...";
+            registerBtn.disabled = true; // Vô hiệu hóa nút khi đang gửi
+
+            try {
+                const response = await fetch('/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `name=${encodeURIComponent(name)}&employee_id=${encodeURIComponent(employeeId)}&image=${encodeURIComponent(capturedImageData)}`
+                });
+
+                const result = await response.json(); 
+
+                if (result.status === 'success') {
+                    statusMsg.className = 'success';
+                    // Reset ảnh, nhưng GIỮ NGUYÊN TÊN VÀ ID
+                    preview.src = '';
+                    preview.style.display = 'none';
+                    capturedImageData = null;
+                } else {
+                    statusMsg.className = 'error';
+                }
+                statusMsg.innerText = result.message;
+
+            } catch (err) {
+                statusMsg.className = 'error';
+                statusMsg.innerText = "Lỗi kết nối. Server có đang chạy không?";
+            }
+            
+            // Kích hoạt lại nút capture (nút đăng ký vẫn tắt)
+            registerBtn.disabled = true; // Bắt người dùng phải chụp ảnh mới
+        };
+    </script>
+</body>
+</html>

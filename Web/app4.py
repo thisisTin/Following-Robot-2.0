@@ -9,8 +9,9 @@ import serial
 from rplidar import RPLidar # Thư viện Lidar
 
 # --- Cổng & Tốc độ ---
-LIDAR_PORT = '/dev/ttyUSB0'  # Cổng Lidar (có thể là USB0 hoặc USB1)
-SERIAL_PORT = '/dev/ttyUSB1' # Cổng ESP32
+
+LIDAR_PORT = '/dev/ttyUSB1'  # Cổng Lidar (có thể là USB0 hoặc USB1)
+SERIAL_PORT = '/dev/ttyUSB0' # Cổng ESP32
 BAUD_RATE = 9600             
 
 # --- 2. AI Model Initialization ---
