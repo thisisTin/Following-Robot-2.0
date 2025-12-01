@@ -7,8 +7,6 @@ from flask import Flask, render_template, Response
 from flask_socketio import SocketIO, emit
 import serial
 from rplidar import RPLidar
-
-# --- (***THAY ĐỔI 1: THÊM THƯ VIỆN NHẬN DIỆN KHUÔN MẶT***) ---
 import face_recognition
 import pickle
 import os
@@ -17,7 +15,7 @@ import numpy as np
 # --- Cổng & Tốc độ ---
 LIDAR_PORT = '/dev/ttyUSB1'  
 SERIAL_PORT = '/dev/ttyUSB0' 
-BAUD_RATE = 9600             
+BAUD_RATE = 9600            
 
 # --- 2. AI Model Initialization ---
 print("Loading AI Models...")
@@ -34,35 +32,37 @@ app.config['SECRET_KEY'] = 'your_very_secret_key'
 socketio = SocketIO(app, async_mode='threading')
 
 # --- 4. Global Variables & Serial Initialization ---
-global_frame = None                  
-robot_state = "IDLE"                 # <-- Khởi động ở IDLE
-manual_command = "STOP"              
-lock = threading.Lock()              
-light_state = False                  
-target_person_id = None              # Đây sẽ là YOLO track_id
-tracker = None                       # Đây là CSRT Tracker (để bám mượt)
+global_frame = None              
+robot_state = "IDLE"               # <-- Khởi động ở IDLE
+manual_command = "STOP"            
+lock = threading.Lock()            
+light_state = False                
+target_person_id = None            # Đây sẽ là YOLO track_id
+tracker = None                     # Đây là CSRT Tracker (để bám mượt)
 
-# --- (***THAY ĐỔI 2: BIẾN NHẬN DIỆN KHUÔN MẶT***) ---
-ENCODINGS_DIR = "Register-ID"        # Thư mục chứa file .pkl
-known_face_data = []                 # List chứa data {name, encodings}
-face_recognition_cache = {}          # Cache: {track_id: "Tên"}
-RECOGNIZE_FACE_INTERVAL = 15         # Chạy nhận diện 15 frame/lần
+# --- (Biến nhận diện khuôn mặt) ---
+ENCODINGS_DIR = "Register-ID"      # Thư mục chứa file .pkl
+known_face_data = []               # List chứa data {name, encodings}
+face_recognition_cache = {}        # Cache: {track_id: "Tên"}
+RECOGNIZE_FACE_INTERVAL = 15       # Chạy nhận diện 15 frame/lần
 
-# --- Biến Lidar (Giữ nguyên) ---
+# --- Biến Lidar ---
 lidar = None
 MIN_SAFE_DISTANCE = 0.5 
 lidar_scan_data = {'front_distance': float('inf'), 'back_distance': float('inf')}
 
-# --- Hằng số P-Controller (Giữ nguyên) ---
+# --- Hằng số PD-Controller ---
 TARGET_AREA = 50000       
-KP_DISTANCE = 0.004       
-KP_TURN = 0.2             
-MAX_FWD_SPEED = 200       
-MAX_TURN_SPEED = 160      
-MIN_MOVE_PWM = 180
-RE_DETECT_INTERVAL = 30        
+KP_DISTANCE = 0.0228
+KD_DISTANCE = 0.7747       # <-- Dấu dương để phanh (chống lại Kp dương)
+KP_TURN = 0.45
+KD_TURN = 0.08             
+MAX_FWD_SPEED = 195        # <-- Tốc độ của bạn
+MAX_TURN_SPEED = 210       # <-- Tốc độ của bạn
+MIN_MOVE_PWM = 180         # <-- Vùng chết quan trọng
+RE_DETECT_INTERVAL = 30    # Số frame chạy YOLO 1 lần để re-check   
 
-# Serial Communication (Giữ nguyên)
+# Serial Communication
 try:
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)  
     print(f"Serial Port {SERIAL_PORT} opened successfully at {BAUD_RATE} baud.")
@@ -70,7 +70,7 @@ except serial.SerialException as e:
     print(f"ERROR: Could not open serial port {SERIAL_PORT}. {e}")
     ser = None 
 
-# --- 5. Robot Hardware Functions (Giữ nguyên) ---
+# --- 5. Robot Hardware Functions ---
 def clamp(n, minn, maxn): return max(min(maxn, n), minn)
 
 def set_robot_pwm(left_pwm, right_pwm, intent=""):
@@ -86,13 +86,19 @@ def set_robot_pwm(left_pwm, right_pwm, intent=""):
         left_pwm, right_pwm, intent = 0, 0, f"LIDAR_STOP_FWD (was {intent})"
     elif is_moving_backward and current_back_distance < MIN_SAFE_DISTANCE:
         left_pwm, right_pwm, intent = 0, 0, f"LIDAR_STOP_BCK (was {intent})"
-    # 2. Deadzone
+
+    # 2. Deadzone (Áp dụng cho mọi trường hợp)
+    # Đây là logic mấu chốt:
+    # Nếu right_pwm = -140 (như ví dụ), nó sẽ được boost lên -180
     def _boost_pwm(pwm_val):
         if 0 < pwm_val < MIN_MOVE_PWM: return MIN_MOVE_PWM
         if 0 > pwm_val > -MIN_MOVE_PWM: return -MIN_MOVE_PWM
         return pwm_val
     left_pwm, right_pwm = int(_boost_pwm(left_pwm)), int(_boost_pwm(right_pwm))
+    
+    # Clamp (luôn áp dụng)
     left_pwm, right_pwm = clamp(left_pwm, -255, 255), clamp(right_pwm, -255, 255)
+    
     # 3. Gửi Serial
     serial_command = f"MOVE:{left_pwm}:{right_pwm}\n"  
     if ser:
@@ -108,7 +114,8 @@ def set_robot_pwm(left_pwm, right_pwm, intent=""):
 
 def execute_robot_move(command, intent=""):
     if intent == "": intent = command
-    SPEED, TURN_SPEED = 190, 220
+    # Đồng bộ tốc độ Manual
+    SPEED, TURN_SPEED = 195, 210
     CURVE_SLOW, CURVE_FAST = int(SPEED * 0.5), SPEED
     cmd_map = {
         "FORWARD": (SPEED, SPEED), "LEFT": (-TURN_SPEED, TURN_SPEED),
@@ -117,7 +124,8 @@ def execute_robot_move(command, intent=""):
         "BACKWARD_LEFT": (-CURVE_FAST, -CURVE_SLOW), "BACKWARD_RIGHT": (-CURVE_SLOW, -CURVE_FAST),
         "STOP": (0, 0)
     }
-    set_robot_pwm(*cmd_map.get(command, (0, 0)), intent)
+    # Logic Manual này đã đúng (LEFT = lùi/tiến, RIGHT = tiến/lùi)
+    set_robot_pwm(*cmd_map.get(command, (0, 0)), "MANUAL_" + intent)
 
 def toggle_light_relay(new_state):
     global ser
@@ -160,7 +168,7 @@ def lidar_logic_thread(): # (Giữ nguyên)
     finally: 
         if lidar: print("Stopping Lidar..."); lidar.stop(); lidar.disconnect()
 
-# --- (***THAY ĐỔI 3: CÁC HÀM HELPER MỚI***) ---
+# --- (Các hàm Helper nhận diện) (Giữ nguyên) ---
 
 def load_known_faces():
     """Tải tất cả file .pkl từ thư mục Register-ID"""
@@ -205,9 +213,7 @@ def recognize_face(frame_crop_rgb):
         # Thường là lỗi 'IndexError' nếu crop quá nhỏ
         return "Unknown"
 
-# --- (***THAY ĐỔI 4: ROBOT LOGIC THREAD (ĐẠI TU)***) ---
-# (Đây là logic 3 trạng thái ĐÚNG)
-# -----------------------------------------------------------------
+# --- (ROBOT LOGIC THREAD - PD CONTROLLER) ---
 def robot_logic_thread():
     global global_frame, robot_state, manual_command, light_state, model
     global target_person_id, tracker, face_recognition_cache
@@ -220,26 +226,72 @@ def robot_logic_thread():
     FRAME_CENTER_X = FRAME_WIDTH / 2
     
     prev_frame_time = 0
-    print("Robot logic thread started (với logic SỬA LỖI)...")
+    print("Robot logic thread started (với logic SỬA LỖI RẼ HƯỚNG)...")
     
     frame_count = 0
     INFO_SKIP_FRAMES = 15 
-    jpeg_quality = [int(cv2.IMWRITE_JPEG_QUALITY), 80] # Tăng chất lượng ảnh 1 chút
+    jpeg_quality = [int(cv2.IMWRITE_JPEG_QUALITY), 80] 
+
+    # --- Biến cho PD CONTROLLER ---
+    prev_error_area = 0.0
+    prev_error_turn = 0.0
+    prev_time_pd = time.time() # Lấy mốc thời gian đầu tiên
 
     # --- Các hàm Helper nội bộ ---
-    def run_p_controller(bbox, frame_center_x):
+    
+    # --- Hàm PD Controller ---
+    def run_pd_controller(bbox, frame_center_x):
+        nonlocal prev_error_area, prev_error_turn, prev_time_pd # <-- Rất quan trọng
+
+        # --- 1. Tính toán thời gian ---
+        current_time_pd = time.time()
+        time_delta = current_time_pd - prev_time_pd
+        if time_delta == 0: 
+            time_delta = 1e-6 
+
+        # --- 2. Tính toán lỗi (P-term) ---
         (x, y, w, h) = (int(t) for t in bbox)
         current_centerX, current_area = x + (w // 2), w * h
-        if frame_count % INFO_SKIP_FRAMES == 0: 
-             print(f"DEBUG (Follow): Area: {current_area:.0f} (Target: {TARGET_AREA})")
-        error_area = TARGET_AREA - current_area
-        fwd_speed = clamp(KP_DISTANCE * error_area, -MAX_FWD_SPEED, MAX_FWD_SPEED)
+        
+        error_area = current_area - TARGET_AREA 
         error_turn = frame_center_x - current_centerX
-        turn_speed = clamp(KP_TURN * error_turn, -MAX_TURN_SPEED, MAX_TURN_SPEED)
-        set_robot_pwm(fwd_speed + turn_speed, fwd_speed - turn_speed, "PID_FOLLOW")
+
+        if frame_count % INFO_SKIP_FRAMES == 0: 
+            print(f"DEBUG (Follow): Area: {current_area:.0f}, ErrorTurn: {error_turn:.0f}")
+
+        # --- 3. Tính toán Derivative (D-term) ---
+        derivative_area = (error_area - prev_error_area) / time_delta
+        derivative_turn = (error_turn - prev_error_turn) / time_delta
+
+        # --- 4. Tính toán tín hiệu điều khiển (Output) ---
+        p_term_area = KP_DISTANCE * error_area
+        d_term_area = KD_DISTANCE * derivative_area 
+        fwd_speed = p_term_area + d_term_area
+        fwd_speed = clamp(fwd_speed, -MAX_FWD_SPEED, MAX_FWD_SPEED)
+        
+        p_term_turn = KP_TURN * error_turn
+        d_term_turn = KD_TURN * derivative_turn 
+        turn_speed = p_term_turn + d_term_turn
+        turn_speed = clamp(turn_speed, -MAX_TURN_SPEED, MAX_TURN_SPEED)
+        
+        # --- 5. Cập nhật biến cho vòng lặp sau ---
+        prev_error_area = error_area
+        prev_error_turn = error_turn
+        prev_time_pd = current_time_pd
+
+        # --- (*** SỬA LỖI TRÁI/PHẢI TẠI ĐÂY ***) ---
+        # Logic ĐÚNG để Rẽ Phải (khi error_turn âm -> turn_speed âm):
+        #   left_pwm = fwd + (ÂM) = -190 + (-50) = -240 (Chạy nhanh)
+        #   right_pwm = fwd - (ÂM) = -190 - (-50) = -140 (Chạy chậm, sẽ bị boost lên -180)
+        # Bánh trái nhanh, bánh phải chậm -> Rẽ Phải.
+        
+        left_pwm = fwd_speed + turn_speed  # <-- ĐÃ SỬA
+        right_pwm = fwd_speed - turn_speed # <-- ĐÃ SỬA
+        
+        set_robot_pwm(left_pwm, right_pwm, "PD_FOLLOW")
 
     def find_target_box(results, target_id):
-        # Tìm bbox (x,y,w,h) của 1 track_id cụ thể
+        # (Giữ nguyên)
         if results[0].boxes and results[0].boxes.id is not None:
             for box in results[0].boxes:
                 if int(box.id[0]) == target_id:
@@ -272,7 +324,7 @@ def robot_logic_thread():
 
         # -----------------------------------------------------
         # TRẠNG THÁI: IDLE (BẬT AI + NHẬN DIỆN)
-        # (Đây là LỖI 1: Code cũ của bạn không chạy AI ở đây)
+        # (Giữ nguyên logic này)
         # -----------------------------------------------------
         if current_state == "IDLE":
             hud_color = (0, 255, 255) # Vàng
@@ -292,7 +344,6 @@ def robot_logic_thread():
                     
                     # Chỉ quét lại 15 frame 1 lần
                     if name is None or frame_count % RECOGNIZE_FACE_INTERVAL == 0:
-                        #print(f"Đang nhận diện ID: {track_id}...")
                         try:
                             crop = image[y1:y2, x1:x2]
                             rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
@@ -300,7 +351,7 @@ def robot_logic_thread():
                             face_recognition_cache[track_id] = name # Lưu vào cache
                         except Exception as e:
                              face_recognition_cache[track_id] = "Unknown" 
-                        
+                            
                     # 3. Vẽ box và gửi data
                     rect_list = [int(x1), int(y1), int(x2), int(y2)] 
                     # Gửi ID LÊN WEB ĐỂ CLICK
@@ -320,7 +371,7 @@ def robot_logic_thread():
 
         # -----------------------------------------------------
         # TRẠNG THÁI: MANUAL (TẮT AI)
-        # (Đây là LỖI 2: Code cũ của bạn đã làm đúng)
+        # (Giữ nguyên logic này)
         # -----------------------------------------------------
         elif current_state == "MANUAL":
             hud_color = (255, 0, 0) # Blue
@@ -335,10 +386,7 @@ def robot_logic_thread():
 
         # -----------------------------------------------------
         # TRẠNG THÁI: FOLLOWING (BẬT TRACKER MƯỢT)
-        # (Đây là LỖI 3: Code cũ của bạn bị giật, code này dùng Tracker)
-        # -----------------------------------------------------
-        # -----------------------------------------------------
-        # TRẠNG THÁI: FOLLOWING (ĐÃ SỬA LỖI "BỊP")
+        # (Giữ nguyên logic này)
         # -----------------------------------------------------
         elif current_state == "FOLLOWING":
             hud_color = (0, 250, 0) # Green
@@ -353,9 +401,11 @@ def robot_logic_thread():
                 
                 if target_bbox:
                     print(f"  -> Đã tìm thấy ID {current_target_id}. Khởi tạo Tracker.")
-                    tracker = cv2.legacy.TrackerMOSSE_create()
+                    tracker = cv2.legacy.TrackerMOSSE_create() # Dùng MOSSE vì nó siêu nhanh
                     tracker.init(image, target_bbox)
-                    run_p_controller(target_bbox, FRAME_CENTER_X)
+                    
+                    run_pd_controller(target_bbox, FRAME_CENTER_X) 
+                    
                     (x,y,w,h) = (int(t) for t in target_bbox)
                     cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 3)
                 else:
@@ -368,12 +418,13 @@ def robot_logic_thread():
                 success, bbox_tracker = tracker.update(image)
                 
                 if success:
-                    # BÁM TỐT -> Chạy P-Controller
-                    run_p_controller(bbox_tracker, FRAME_CENTER_X)
+                    # BÁM TỐT -> Chạy PD-Controller
+                    run_pd_controller(bbox_tracker, FRAME_CENTER_X)
+                    
                     (x,y,w,h) = (int(t) for t in bbox_tracker)
                     cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 3)
 
-                    # --- (*** LOGIC SỬA LỖI: KIỂM TRA CHÉO ***) ---
+                    # --- (LOGIC SỬA LỖI: KIỂM TRA CHÉO) ---
                     if frame_count % RE_DETECT_INTERVAL == 0:
                         print(f"  [Re-Check] Đã đến frame {frame_count}. Chạy YOLO để kiểm tra...")
                         results = model.track(image, persist=True, classes=[0], verbose=False, imgsz=320, conf=0.5, tracker="my_tracker.yaml")
@@ -387,13 +438,13 @@ def robot_logic_thread():
                         else:
                             # YOLO THẤY -> Hiệu chỉnh tracker về vị trí đúng
                             print("  [Re-Check] OK. YOLO xác nhận. Hiệu chỉnh lại tracker.")
-                            tracker = cv2.TrackerCSRT_create()
+                            tracker = cv2.legacy.TrackerMOSSE_create() # Dùng MOSSE
                             tracker.init(image, yolo_bbox)
-                    # --- (*** HẾT LOGIC SỬA LỖI ***) ---
-                            
+                    # --- (HẾT LOGIC SỬA LỖI) ---
+                        
                 else:
-                    # TRACKER CSRT TỰ BÁO LÀ MẤT DẤU (hiếm khi xảy ra)
-                    print(f"!!! TRACKER CSRT TỰ BÁO FAILED. Sẽ chạy lại YOLO để tìm.")
+                    # TRACKER TỰ BÁO LÀ MẤT DẤU
+                    print(f"!!! TRACKER TỰ BÁO FAILED. Sẽ chạy lại YOLO để tìm.")
                     with lock: tracker = None 
                     set_robot_pwm(0, 0, "STOP (Tracker Lost)")
             
@@ -421,10 +472,10 @@ def robot_logic_thread():
         # Chỉ gửi box khi ở IDLE
         if current_state == "IDLE":
              if len(boxes_to_send) > 0 or frame_count % 5 == 0: 
-                socketio.emit('detected_boxes', {'boxes': boxes_to_send})
+                 socketio.emit('detected_boxes', {'boxes': boxes_to_send})
         else:
              if frame_count % 5 == 0: 
-                socketio.emit('detected_boxes', {'boxes': []}) # Xóa box
+                 socketio.emit('detected_boxes', {'boxes': []}) # Xóa box
 
         with lock:
             _, buffer = cv2.imencode('.jpg', image, jpeg_quality)
@@ -433,9 +484,8 @@ def robot_logic_thread():
 # --- 7. Flask HTTP Routes (Giữ nguyên) ---
 @app.route('/')
 def index():
-    # Đảm bảo bạn đang dùng file HTML có các nút bấm
-    # render_template('index.html') hoặc 'index2.html'
-    return render_template('index.html') # Đổi tên file nếu cần
+    # File 'index.html' phải nằm trong thư mục 'templates'
+    return render_template('index.html') 
 
 @app.route('/video_feed')
 def video_feed():
@@ -448,7 +498,7 @@ def video_feed():
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-# --- 8. Socket.IO Events ---
+# --- 8. Socket.IO Events (Giữ nguyên) ---
 
 @socketio.on('connect')
 def handle_connect():
@@ -459,9 +509,6 @@ def handle_connect():
         'light': light_state,
         'target_id': target_person_id
     })
-
-# --- (***THAY ĐỔI 5: SOCKET LOGIC (SỬA LỖI BẤM NÚT)***) ---
-# (Đây là logic socket ĐÚNG để CHỌN NGƯỜI và CHỌN CHẾ ĐỘ)
 
 @socketio.on('robot_command')
 def handle_robot_command(data):
@@ -481,7 +528,7 @@ def handle_robot_command(data):
             if robot_state == "MANUAL":
                 manual_command = command.split('_')[1]
                 target_person_id = None; tracker = None
-            
+                
 @socketio.on('set_mode_manual')
 def handle_set_mode_manual():
     """Xử lý khi BẤM NÚT 'Manual'"""
@@ -563,4 +610,5 @@ if __name__ == '__main__':
         lidar_thread.start()
 
         print("Starting Web Server at http://0.0.0.0:5001")
-        socketio.run(app, host='0.0.0.0', port=5001, debug=False)
+        # debug=False là quan trọng để không khởi động 2 tiến trình
+        socketio.run(app, host='0.0.0.0', port=5001, debug=False, allow_unsafe_werkzeug=True)
