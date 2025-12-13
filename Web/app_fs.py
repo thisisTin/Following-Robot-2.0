@@ -11,180 +11,157 @@ import pickle
 import os
 import numpy as np
 
-# --- Cổng & Tốc độ --- 
+# --- Cổng & Tốc độ ---
 SERIAL_PORT = '/dev/ttyUSB0' 
 BAUD_RATE = 9600             
 
-# --- 2. AI Model Initialization ---
+# --- 2. AI Model ---
 print("Loading AI Models...")
 try:
     model = YOLO('yolov8n.pt') 
-    print("Models loaded successfully.")
+    print("Models loaded.")
 except Exception as e:
-    print(f"FATAL: Could not load YOLO model. {e}")
     model = None 
 
-# --- 3. Web Server Initialization ---
+# --- 3. Web Server ---
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your_very_secret_key'
+app.config['SECRET_KEY'] = 'secret'
 socketio = SocketIO(app, async_mode='threading')
 
-# --- 4. Global Variables & Serial Initialization ---
+# --- 4. Global Variables ---
 global_frame = None                  
 robot_state = "IDLE"                 
 manual_command = "STOP"              
 lock = threading.Lock()              
 light_state = False                  
-target_person_id = None            
-tracker = None                       
 
-# --- (Biến nhận diện khuôn mặt) ---
+# --- Tracking ---
+target_person_id = None              
+target_person_name = None            # Lưu tên để tìm lại
+tracker = None                       
+# Cờ này bật lên khi mất dấu để báo hiệu robot đang tìm lại mục tiêu cũ
+is_reacquiring = False               
+
+# --- Face ID ---
 ENCODINGS_DIR = "Register-ID"        
 known_face_data = []                 
 face_recognition_cache = {}          
-RECOGNIZE_FACE_INTERVAL = 15         
+RECOGNIZE_FACE_INTERVAL = 10         
 
-# --- Biến Cảm biến (Thay Lidar bằng HC-SR04) ---
-lidar_scan_data = {'front_distance': 999.0, 'back_distance': 999.0}
-MIN_SAFE_DISTANCE = 0.5 # 50 cm
+# --- Sensors & Failsafe ---
+sensor_data = {'front': 999.0, 'back': 999.0}
+SAFE_DIST_AUTO = 50     
+SAFE_DIST_MANUAL = 15   
+current_failsafe_cm = SAFE_DIST_AUTO 
 
-# ==============================================================================
-# --- CẤU HÌNH TỐC ĐỘ & PID (ĐÃ TUNE LẠI) ---
-# ==============================================================================
-TARGET_AREA = 60000        
+# --- PID & SPEED ---
+TARGET_AREA = 40000       
 
-# 1. PID Tuning
-KP_DISTANCE = 0.0015       
-KD_DISTANCE = 0.6          
-KP_TURN = 0.35             
-KD_TURN = 0.1              
+KP_DISTANCE = 0.0228
+KD_DISTANCE = 0.7747       
+KP_TURN = 0.45
+KD_TURN = 0.08             
 
-# 2. AUTO MODE (KẸP 180-195)
-MIN_MOVE_PWM = 180         # Sàn: Dưới mức này kích lên 180
-MAX_FWD_SPEED_AUTO = 195   # Trần: Cắt ngay nếu vượt quá 195
-MAX_TURN_SPEED_AUTO = 185  
+MAX_FWD_SPEED = 195        
+MAX_TURN_SPEED = 210       
+MIN_MOVE_PWM = 188         
+RE_DETECT_INTERVAL = 30        
 
-# 3. MANUAL MODE
-MAX_SPEED_MANUAL = 255     # Mặc định, sẽ được Slider cập nhật
-
-RE_DETECT_INTERVAL = 30    
-
-# Serial Communication
+# --- Serial ---
 try:
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)  
-    print(f"Serial Port {SERIAL_PORT} opened successfully at {BAUD_RATE} baud.")
-except serial.SerialException as e:
-    print(f"ERROR: Could not open serial port {SERIAL_PORT}. {e}")
-    ser = None 
+    print(f"Serial Port {SERIAL_PORT} opened.")
+    time.sleep(2) 
+except: ser = None 
 
-# --- 5. Robot Hardware Functions ---
+# --- 5. Helper Functions ---
 
-def clamp(n, minn, maxn): 
-    return max(min(maxn, n), minn)
+def clamp(n, minn, maxn): return max(min(maxn, n), minn)
+
+def set_failsafe_distance_cm(dist_cm):
+    global current_failsafe_cm
+    current_failsafe_cm = dist_cm
+    if ser:
+        try: ser.write(f"SET_STOP_DIST:{dist_cm}\n".encode())
+        except: pass
 
 def set_robot_pwm(left_pwm, right_pwm, intent=""):
-    global ser, lidar_scan_data, lock, MIN_SAFE_DISTANCE, MIN_MOVE_PWM
+    global ser, sensor_data, lock, current_failsafe_cm, MIN_MOVE_PWM
     left_pwm, right_pwm = int(left_pwm), int(right_pwm)
     
-    # 1. FAILSAFE (SỬ DỤNG DỮ LIỆU TỪ ESP32)
     with lock:
-        d_front = lidar_scan_data.get('front_distance', 999.0)
-        d_back = lidar_scan_data.get('back_distance', 999.0)
+        dist_front = sensor_data['front']
+        dist_back = sensor_data['back']
     
-    is_fwd = left_pwm > 0 or right_pwm > 0
-    is_bck = left_pwm < 0 or right_pwm < 0
+    # --- FAILSAFE THÔNG MINH ---
+    # Chặn TIẾN (>0) nếu vướng trước
+    if (left_pwm > 0 or right_pwm > 0) and dist_front < current_failsafe_cm: 
+        left_pwm, right_pwm = 0, 0 
     
-    blocked = False
-    if is_fwd and d_front < MIN_SAFE_DISTANCE:
+    # Chặn LÙI (<0) nếu vướng sau
+    if (left_pwm < 0 or right_pwm < 0) and dist_back < current_failsafe_cm: 
         left_pwm, right_pwm = 0, 0
-        intent = f"FAILSAFE_STOP_FWD (Dist: {d_front:.2f}m)"
-        blocked = True
-    elif is_bck and d_back < MIN_SAFE_DISTANCE:
-        left_pwm, right_pwm = 0, 0
-        intent = f"FAILSAFE_STOP_BCK (Dist: {d_back:.2f}m)"
-        blocked = True
 
-    # 2. Deadzone Boost (CHỈ AUTO & KHÔNG BỊ BLOCK)
-    if "PD_FOLLOW" in intent and not blocked:
-        def _boost_pwm(pwm_val):
-            if pwm_val == 0: return 0
-            # Nếu yếu quá -> Kích lên 180
-            if 0 < pwm_val < MIN_MOVE_PWM: return MIN_MOVE_PWM
-            if 0 > pwm_val > -MIN_MOVE_PWM: return -MIN_MOVE_PWM
-            return pwm_val
-        left_pwm = int(_boost_pwm(left_pwm))
-        right_pwm = int(_boost_pwm(right_pwm))
+    # Deadzone Boost
+    def _boost(val):
+        if 0 < val < MIN_MOVE_PWM: return MIN_MOVE_PWM
+        if 0 > val > -MIN_MOVE_PWM: return -MIN_MOVE_PWM
+        return val
     
-    # Clamp
+    if left_pwm != 0: left_pwm = _boost(left_pwm)
+    if right_pwm != 0: right_pwm = _boost(right_pwm)
+
     left_pwm = clamp(left_pwm, -255, 255)
     right_pwm = clamp(right_pwm, -255, 255)
 
-    # 3. Gửi Serial
-    serial_command = f"MOVE:{left_pwm}:{right_pwm}\n"  
     if ser:
-        try:
-            ser.write(serial_command.encode())
-            # LOGGING: Chỉ in khi có lệnh điều khiển hoặc Failsafe
-            if left_pwm != 0 or right_pwm != 0 or "STOP" in intent or "FAILSAFE" in intent:
-                 if "PD_FOLLOW" not in intent: 
-                     print(f"INTENT: {intent} -> EXECUTING: {serial_command.strip()}")
-        except Exception as e: print(f"Serial write error: {e}")
+        try: ser.write(f"MOVE:{left_pwm}:{right_pwm}\n".encode())
+        except: pass
+    
+    return left_pwm, right_pwm
 
 def execute_robot_move(command, intent=""):
-    if intent == "": intent = command
-    # Dùng biến toàn cục (được chỉnh bởi Slider)
-    SPEED = MAX_SPEED_MANUAL - 15
-    TURN_SPEED = MAX_SPEED_MANUAL
-    CURVE_SLOW = int(SPEED * 0.4)
-    CURVE_FAST = SPEED
-    
+    SPEED = MAX_FWD_SPEED 
+    TURN_SPEED = MAX_TURN_SPEED
+    CURVE = int(SPEED * 0.5)
     cmd_map = {
         "FORWARD": (SPEED, SPEED), "LEFT": (-TURN_SPEED, TURN_SPEED),
         "RIGHT": (TURN_SPEED, -TURN_SPEED), "BACKWARD": (-SPEED, -SPEED),  
-        "FORWARD_LEFT": (CURVE_SLOW, CURVE_FAST), "FORWARD_RIGHT": (CURVE_FAST, CURVE_SLOW),
-        "BACKWARD_LEFT": (-CURVE_FAST, -CURVE_SLOW), "BACKWARD_RIGHT": (-CURVE_SLOW, -CURVE_FAST),
+        "FORWARD_LEFT": (CURVE, SPEED), "FORWARD_RIGHT": (SPEED, CURVE),
+        "BACKWARD_LEFT": (-SPEED, -CURVE), "BACKWARD_RIGHT": (-CURVE, -SPEED),
         "STOP": (0, 0)
     }
-    set_robot_pwm(*cmd_map.get(command, (0, 0)), "MANUAL_" + intent)
+    return set_robot_pwm(*cmd_map.get(command, (0, 0)), intent)
 
 def toggle_light_relay(new_state):
     global ser
-    serial_command = "LIGHT:ON\n" if new_state else "LIGHT:OFF\n"
-    if ser:
-        try: ser.write(serial_command.encode())
-        except Exception as e: print(f"Serial write error: {e}")
+    cmd = "LIGHT:ON\n" if new_state else "LIGHT:OFF\n"
+    if ser: ser.write(cmd.encode())
 
-# --- 6. Main Robot Logic Threads ---
+# --- 6. Threads ---
 
 def serial_read_thread(): 
-    # Đọc dữ liệu từ ESP32: STATUS:L:R:Front:Back:Obs
-    global ser, lidar_scan_data, lock
+    global ser, sensor_data
     if not ser: return 
-    print("Serial reading thread started...")
     while True:
         try:
             if ser.in_waiting > 0:
                 line = ser.readline().decode('utf-8', errors='ignore').strip()
                 if line.startswith("STATUS:"):
                     parts = line.split(':')
-                    if len(parts) >= 6:
+                    if len(parts) >= 5: 
                         with lock:
-                            # Đổi cm -> m để khớp với biến MIN_SAFE_DISTANCE (0.5)
-                            lidar_scan_data['front_distance'] = float(parts[3]) / 100.0
-                            lidar_scan_data['back_distance'] = float(parts[4]) / 100.0
-                elif line: 
-                    print(f"ESP32 RESPONSE: {line}")  
+                            try:
+                                sensor_data['front'] = float(parts[3])
+                                sensor_data['back'] = float(parts[4])
+                            except: pass
             time.sleep(0.01) 
-        except Exception as e: time.sleep(1) 
-
-# --- Helper ---
+        except: time.sleep(0.1) 
 
 def load_known_faces():
     global known_face_data
     known_face_data = []
-    if not os.path.exists(ENCODINGS_DIR):
-        print(f"Cảnh báo: Thư mục '{ENCODINGS_DIR}' không tồn tại.")
-        return
+    if not os.path.exists(ENCODINGS_DIR): return
     for filename in os.listdir(ENCODINGS_DIR):
         if filename.endswith(".pkl"):
             try:
@@ -192,283 +169,309 @@ def load_known_faces():
                     data = pickle.load(f)
                     known_face_data.append(data)
             except: pass
-    print(f"Tổng cộng đã tải {len(known_face_data)} người.")
 
 def recognize_face(frame_crop_rgb):
     global known_face_data
     try:
-        face_locations = face_recognition.face_locations(frame_crop_rgb, model="hog")
-        if not face_locations: return "Unknown"
-        face_encoding = face_recognition.face_encodings(frame_crop_rgb, face_locations)[0]
-        for person_data in known_face_data:
-            if True in face_recognition.compare_faces(person_data["encodings"], face_encoding, 0.5):
-                return person_data["name"]
+        # Tăng upsample để bắt mặt tốt hơn
+        face_locs = face_recognition.face_locations(frame_crop_rgb, number_of_times_to_upsample=2, model="hog")
+        if not face_locs: return "Unknown"
+        encoding = face_recognition.face_encodings(frame_crop_rgb, face_locs)[0]
+        for p in known_face_data:
+            matches = face_recognition.compare_faces(p["encodings"], encoding, tolerance=0.55)
+            if True in matches: return p["name"]
         return "Unknown"
     except: return "Unknown"
 
-# --- (ROBOT LOGIC THREAD - PD CONTROLLER) ---
+# --- HELPER TRACKER ---
+def create_tracker():
+    try: return cv2.legacy.TrackerMOSSE_create()
+    except: return cv2.TrackerCSRT_create()
+
+# --- MAIN LOGIC ---
+frame_count = 0 
+
 def robot_logic_thread():
-    global global_frame, robot_state, manual_command, light_state, model
-    global target_person_id, tracker, face_recognition_cache
+    global global_frame, robot_state, manual_command, model, target_person_id, target_person_name, tracker, frame_count, is_reacquiring
 
-    if model is None: print("FATAL: YOLO Model not loaded."); return
-
+    if model is None: return
     cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(3, 640); cap.set(4, 480)
     FRAME_CENTER_X = 320
     
-    prev_frame_time = 0
-    print("Robot logic thread started...")
-    
-    frame_count = 0
-    INFO_SKIP_FRAMES = 15 
-    jpeg_quality = [int(cv2.IMWRITE_JPEG_QUALITY), 80] 
-
-    # --- Biến cho PD CONTROLLER ---
     prev_error_area = 0.0
     prev_error_turn = 0.0
     prev_time_pd = time.time()
 
-    # --- Hàm PD Controller ---
-    def run_pd_controller(bbox, frame_center_x):
-        nonlocal prev_error_area, prev_error_turn, prev_time_pd
+    telemetry_data = {'area_input': 0, 'error': 0, 'pwm_fwd': 0, 'pwm_l': 0, 'pwm_r': 0, 'dist_front': 999.0}
 
-        current_time_pd = time.time()
-        time_delta = current_time_pd - prev_time_pd
-        if time_delta == 0:  time_delta = 1e-6 
+    def run_pid(bbox):
+        nonlocal prev_error_area, prev_error_turn, prev_time_pd, telemetry_data
+        
+        now = time.time()
+        dt = now - prev_time_pd
+        if dt == 0: dt = 1e-6
 
-        (x, y, w, h) = (int(t) for t in bbox)
-        current_centerX, current_area = x + (w // 2), w * h
+        x, y, w, h = [int(v) for v in bbox]
+        cx, area = x + w//2, w*h
         
-        # --- SỬA LOGIC 1: ĐẢO CHIỀU TIẾN/LÙI ---
-        # Target (Lớn) - Current (Nhỏ) = Dương -> Tiến
-        error_area = TARGET_AREA - current_area 
-        error_turn = frame_center_x - current_centerX
+        # --- [SỬA HƯỚNG DI CHUYỂN] ---
+        # TARGET - AREA:
+        # Xa (Area nhỏ) -> Error DƯƠNG -> Speed DƯƠNG -> TIẾN
+        # Gần (Area lớn) -> Error ÂM -> Speed ÂM -> LÙI
+        error_area = TARGET_AREA - area 
+        error_turn = FRAME_CENTER_X - cx
+        
+        d_area = (error_area - prev_error_area) / dt
+        d_turn = (error_turn - prev_error_turn) / dt
 
-        if frame_count % INFO_SKIP_FRAMES == 0: 
-            print(f"DEBUG (PID): Area={current_area:.0f} | ErrA={error_area:.0f} | ErrT={error_turn:.0f}")
+        fwd = (KP_DISTANCE * error_area) + (KD_DISTANCE * d_area)
+        turn = (KP_TURN * error_turn) + (KD_TURN * d_turn)
+        
+        fwd = clamp(fwd, -MAX_FWD_SPEED, MAX_FWD_SPEED)
+        turn = clamp(turn, -MAX_TURN_SPEED, MAX_TURN_SPEED)
 
-        d_area = (error_area - prev_error_area) / time_delta
-        d_turn = (error_turn - prev_error_turn) / time_delta
-
-        p_term_area = KP_DISTANCE * error_area
-        d_term_area = KD_DISTANCE * derivative_area
-        fwd_speed = p_term_area + d_term_area
-        
-        # --- KẸP TRẦN AUTO (195) ---
-        fwd_speed = clamp(fwd_speed, -MAX_FWD_SPEED_AUTO, MAX_FWD_SPEED_AUTO)
-        
-        p_term_turn = KP_TURN * error_turn
-        d_term_turn = KD_TURN * derivative_turn 
-        turn_speed = p_term_turn + d_term_turn
-        
-        # --- KẸP TRẦN RẼ (185) ---
-        turn_speed = clamp(turn_speed, -MAX_TURN_SPEED_AUTO, MAX_TURN_SPEED_AUTO)
-        
         prev_error_area = error_area
         prev_error_turn = error_turn
-        prev_time_pd = current_time_pd
-
-        # --- SỬA LOGIC 2: ĐẢO CHIỀU RẼ ---
-        # Left = Fwd - Turn
-        left_pwm = fwd_speed - turn_speed 
-        right_pwm = fwd_speed + turn_speed 
+        prev_time_pd = now
         
-        set_robot_pwm(left_pwm, right_pwm, "PD_FOLLOW")
-
-    def find_target_box(results, target_id):
-        if results[0].boxes and results[0].boxes.id is not None:
-            for box in results[0].boxes:
-                if int(box.id[0]) == target_id:
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                    return (x1, y1, x2-x1, y2-y1) 
-        return None 
+        l_pwm, r_pwm = set_robot_pwm(fwd + turn, fwd - turn, "AUTO")
+        
+        telemetry_data.update({'area_input': int(area), 'error': int(error_area), 'pwm_fwd': int(fwd), 'pwm_l': l_pwm, 'pwm_r': r_pwm})
 
     while True:
-        if not cap.isOpened():
-            print("Camera error. Reconnecting..."); time.sleep(1)
-            cap.release(); cap = cv2.VideoCapture(0) 
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            continue 
-
         success, image = cap.read()
-        if not success:
-            print("Camera read failed."); time.sleep(1); continue 
-            
+        if not success: time.sleep(0.1); continue
+        
         frame_count += 1
         image = cv2.flip(image, 1) 
+        telemetry_data['dist_front'] = sensor_data['front']
         
         with lock:
-            current_state = robot_state
-            current_manual_cmd = manual_command
-            current_target_id = target_person_id
+            curr_state = robot_state
+            curr_target_id = target_person_id
+            curr_target_name = target_person_name
+        
+        boxes_to_send = []
 
-        hud_text = f"STATE: {current_state}"
-        hud_color = (0, 0, 255) 
-        boxes_to_send = [] 
-
-        # -----------------------------------------------------
-        # IDLE
-        # -----------------------------------------------------
-        if current_state == "IDLE":
-            hud_color = (0, 255, 255) 
+        if curr_state == "IDLE":
+            telemetry_data.update({'pwm_l': 0, 'pwm_r': 0, 'error': 0, 'area_input': 0, 'pwm_fwd': 0})
+            
             results = model.track(image, persist=True, classes=[0], verbose=False, imgsz=320, tracker="my_tracker.yaml")
+            
             if results[0].boxes and results[0].boxes.id is not None:
-                boxes_cpu = results[0].boxes.xyxy.cpu().numpy().astype(int)
-                track_ids = results[0].boxes.id.cpu().numpy().astype(int)
-                for b, i in zip(boxes_cpu, track_ids):
-                    name = face_recognition_cache.get(i, None)
+                boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
+                ids = results[0].boxes.id.cpu().numpy().astype(int)
+                
+                for box, trk_id in zip(boxes, ids):
+                    x1, y1, x2, y2 = box
+                    name = face_recognition_cache.get(trk_id, None)
+                    
                     if name is None or frame_count % RECOGNIZE_FACE_INTERVAL == 0:
                         try:
-                            crop = cv2.cvtColor(image[b[1]:b[3], b[0]:b[2]], cv2.COLOR_BGR2RGB)
-                            face_recognition_cache[i] = recognize_face(crop)
+                            crop = image[y1:y2, x1:x2]
+                            rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                            name = recognize_face(rgb)
+                            face_recognition_cache[trk_id] = name
                         except: pass
                     
-                    boxes_to_send.append({'id': int(i), 'rect': [int(x) for x in b]})
-                    cv2.rectangle(image, (b[0],b[1]), (b[2],b[3]), (0,255,0), 2)
-                    cv2.putText(image, f"{face_recognition_cache.get(i,'Unknown')} ({i})", (b[0],b[1]-10), 0, 0.5, (0,255,0), 2)
-            
-            set_robot_pwm(0, 0, "IDLE_STATE")
-            if frame_count % 5 == 0: socketio.emit('detected_boxes', {'boxes': boxes_to_send})
+                    # --- LOGIC TÌM LẠI NGƯỜI CŨ (Nguyên bản) ---
+                    # Nếu đang ở chế độ "Tìm lại" (is_reacquiring) VÀ thấy đúng ID cũ HOẶC Tên cũ
+                    # -> Tự động chuyển sang FOLLOW
+                    if is_reacquiring:
+                        match_id = (curr_target_id is not None and int(trk_id) == curr_target_id)
+                        match_name = (curr_target_name is not None and name == curr_target_name and name != "Unknown")
+                        
+                        if match_id or match_name:
+                            print(f"FOUND TARGET AGAIN: {name if name else trk_id}. RESUMING FOLLOW.")
+                            with lock:
+                                target_person_id = int(trk_id) # Cập nhật ID mới nếu YOLO đổi ID
+                                robot_state = "FOLLOWING"
+                                tracker = None # Để khởi tạo lại tracker mới
+                            break # Thoát vòng lặp box để vào mode follow ngay
 
-        # -----------------------------------------------------
-        # MANUAL
-        # -----------------------------------------------------
-        elif current_state == "MANUAL":
-            hud_color = (255, 0, 0) 
-            hud_text = "STATE: MANUAL (AI OFF)"
-            execute_robot_move(current_manual_cmd, "MANUAL_JOYSTICK")
-            face_recognition_cache.clear() 
-            if frame_count % 5 == 0: socketio.emit('detected_boxes', {'boxes': []})
-
-        # -----------------------------------------------------
-        # FOLLOWING (LOGIC RE-CHECK GIỮ NGUYÊN)
-        # -----------------------------------------------------
-        elif current_state == "FOLLOWING":
-            hud_color = (0, 250, 0) 
+                    boxes_to_send.append({'id': int(trk_id), 'rect': [int(x1), int(y1), int(x2), int(y2)]})
             
+            set_robot_pwm(0, 0, "IDLE")
+
+        elif curr_state == "MANUAL":
+            l, r = execute_robot_move(manual_command, "MANUAL")
+            telemetry_data['pwm_l'] = l; telemetry_data['pwm_r'] = r
+
+        elif curr_state == "FOLLOWING":
             if tracker is None:
-                hud_text = f"FOLLOW (Finding ID: {current_target_id})"
-                # Re-init using YOLO
-                results = model.track(image, persist=True, classes=[0], verbose=False, imgsz=320, tracker="my_tracker.yaml")
-                target_bbox = find_target_box(results, current_target_id)
+                # Tìm box của ID mục tiêu để init tracker
+                res = model.track(image, persist=True, verbose=False, imgsz=320, tracker="my_tracker.yaml")
+                init_box = None
+                if res[0].boxes and res[0].boxes.id is not None:
+                    ids = res[0].boxes.id.cpu().numpy().astype(int)
+                    if curr_target_id in ids:
+                        idx = np.where(ids == curr_target_id)[0][0]
+                        x1,y1,x2,y2 = res[0].boxes.xyxy.cpu().numpy().astype(int)[idx]
+                        init_box = (x1, y1, x2-x1, y2-y1)
                 
-                if target_bbox:
-                    print(f"🎯 FOUND ID {current_target_id}. INIT TRACKER.")
-                    tracker = cv2.legacy.TrackerMOSSE_create() 
-                    tracker.init(image, target_bbox)
-                    run_pd_controller(target_bbox, FRAME_CENTER_X) 
-                else:
-                    set_robot_pwm(0, 0, "SEARCHING") # Không dừng hẳn
-            else:
-                hud_text = f"TRACKING ID: {current_target_id}"
-                success, bbox_tracker = tracker.update(image)
-                
-                if success:
-                    run_pd_controller(bbox_tracker, FRAME_CENTER_X)
-                    cv2.rectangle(image, (int(bbox_tracker[0]), int(bbox_tracker[1])), (int(bbox_tracker[0]+bbox_tracker[2]), int(bbox_tracker[1]+bbox_tracker[3])), (0,255,255), 3)
+                if init_box:
+                    tracker = create_tracker()
+                    tracker.init(image, init_box)
+                    run_pid(init_box)
                     
-                    # LOGIC RE-CHECK
+                    # Nếu chưa biết tên, thử nhận diện ngay
+                    if curr_target_name is None or curr_target_name == "Unknown":
+                        try:
+                            x, y, w, h = init_box
+                            crop = image[y:y+h, x:x+w]
+                            rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                            name = recognize_face(rgb)
+                            if name != "Unknown":
+                                with lock: target_person_name = name
+                        except: pass
+                else:
+                    # KHÔNG TÌM THẤY -> VỀ IDLE NHƯNG BẬT CỜ "TÌM LẠI"
+                    print("LOST TARGET ON INIT. SWITCHING TO IDLE TO SEARCH.")
+                    with lock: 
+                        robot_state = "IDLE"
+                        tracker = None
+                        is_reacquiring = True # Bật cờ tìm lại
+            
+            if tracker:
+                ok, box = tracker.update(image)
+                if ok:
+                    run_pid(box)
+                    x,y,w,h = [int(v) for v in box]
+                    boxes_to_send.append({'id': curr_target_id, 'rect': [x, y, x+w, y+h]})
+                    
+                    # Update tên khi đang follow
+                    if (curr_target_name is None or curr_target_name == "Unknown") and frame_count % 10 == 0:
+                        try:
+                            crop = image[y:y+h, x:x+w]
+                            rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                            name = recognize_face(rgb)
+                            if name != "Unknown":
+                                with lock: target_person_name = name
+                        except: pass
+
+                    # Check YOLO định kỳ
                     if frame_count % RE_DETECT_INTERVAL == 0:
                         res = model.track(image, persist=True, verbose=False, imgsz=320, tracker="my_tracker.yaml")
-                        yolo_box = find_target_box(res, current_target_id)
-                        if yolo_box:
-                            tracker = cv2.legacy.TrackerMOSSE_create()
-                            tracker.init(image, yolo_box)
-                        else:
-                            print("❌ RE-CHECK FAILED. RESET TRACKER.")
-                            tracker = None 
+                        found = False
+                        if res[0].boxes and res[0].boxes.id is not None:
+                            if curr_target_id in res[0].boxes.id.cpu().numpy().astype(int): found = True
+                        
+                        if not found:
+                            print("YOLO LOST TARGET. SWITCHING TO IDLE TO SEARCH.")
+                            with lock: 
+                                robot_state = "IDLE"
+                                tracker = None
+                                is_reacquiring = True
                 else:
-                    print("❌ TRACKER LOST.")
-                    tracker = None
+                    # Tracker mất dấu -> VỀ IDLE ĐỂ TÌM
+                    print("TRACKER LOST. SWITCHING TO IDLE TO SEARCH.")
+                    with lock: 
+                        robot_state = "IDLE"
+                        tracker = None
+                        is_reacquiring = True
+            else:
+                set_robot_pwm(0,0,"NO_TRACKER")
 
-            if frame_count % 5 == 0: socketio.emit('detected_boxes', {'boxes': []})
+        # LUÔN GỬI TELEMETRY
+        socketio.emit('telemetry', telemetry_data)
         
-        # --- HUD ---
-        new_frame_time = time.time(); fps = 1 / (new_frame_time - prev_frame_time) if (new_frame_time - prev_frame_time) > 0 else 0
-        prev_frame_time = new_frame_time
-        cv2.putText(image, hud_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, hud_color, 2)
-        
-        # Cảnh báo Failsafe trên màn hình
-        with lock: fd = lidar_scan_data.get('front_distance', 999)
-        if fd < MIN_SAFE_DISTANCE:
-             cv2.putText(image, f"⚠️ STOP! FRONT: {fd:.2f}m", (10, 240), 0, 1.2, (0,0,255), 3)
-        else:
-             cv2.putText(image, f"F_Dist: {fd:.2f}m", (10, 60), 0, 0.7, (0,255,255), 2)
-
-        if frame_count % 15 == 0:
-            with lock: 
-                cur_l = light_state
-                cur_t = target_person_id
+        if frame_count % 2 == 0: 
+            socketio.emit('detected_boxes', {'boxes': boxes_to_send})
             socketio.emit('robot_info', {
-                'fps': int(fps), 
-                'state': current_state, 
-                'light': current_light_state,
-                'target_id': current_target_id_for_web
+                'state': 'SEARCHING' if (curr_state == 'IDLE' and is_reacquiring) else curr_state, 
+                'target_id': curr_target_id
             })
 
         with lock:
-            _, buffer = cv2.imencode('.jpg', image, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            global_frame = buffer.tobytes()
+            _, buf = cv2.imencode('.jpg', image, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            global_frame = buf.tobytes()
 
-# --- 7. Flask HTTP Routes ---
 @app.route('/')
-def index(): return render_template('index2.html') 
+def index(): return render_template('index2.html')
 
 @app.route('/video_feed')
 def video_feed():
     def gen():
         while True:
             with lock: f = global_frame
-            if f is None: time.sleep(0.1); continue
-            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + f + b'\r\n')
+            if f: yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + f + b'\r\n')
+            else: time.sleep(0.05)
     return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-# --- 8. Socket Events ---
+@socketio.on('update_manual_speed')
+def handle_speed(data):
+    global MAX_FWD_SPEED, MAX_TURN_SPEED
+    try:
+        val = int(data.get('speed', 180))
+        MAX_FWD_SPEED = val
+        MAX_TURN_SPEED = min(val + 20, 255)
+    except: pass
+
 @socketio.on('robot_command')
-def on_cmd(data):
-    global robot_state, manual_command, tracker
+def handle_cmd(data):
+    global robot_state, manual_command, is_reacquiring
     cmd = data.get('command')
     if cmd.startswith('MANUAL_'):
-        with lock: 
+        with lock:
             robot_state = "MANUAL"
             manual_command = cmd.split('_')[1]
-            tracker = None
-
-@socketio.on('set_mode_manual')
-def on_manual():
-    with lock: global robot_state; robot_state = "MANUAL"
+            is_reacquiring = False # Tắt tìm kiếm khi lái tay
+            set_failsafe_distance_cm(SAFE_DIST_MANUAL)
 
 @socketio.on('set_mode_idle')
-def on_idle():
+def set_idle():
+    global robot_state, is_reacquiring
     with lock: 
-        print("CANCEL FOLLOW -> IDLE")
-        global robot_state, tracker, target_person_id
-        robot_state, target_person_id, tracker = "IDLE", None, None
+        robot_state = "IDLE"
+        is_reacquiring = False # Reset tìm kiếm
+    set_failsafe_distance_cm(SAFE_DIST_AUTO)
+
+@socketio.on('set_mode_manual')
+def set_manual():
+    global robot_state, is_reacquiring
+    with lock: 
+        robot_state = "MANUAL"
+        is_reacquiring = False
+    set_failsafe_distance_cm(SAFE_DIST_MANUAL)
+
+@socketio.on('cancel_target')
+def cancel():
+    global robot_state, tracker, target_person_id, target_person_name, is_reacquiring
+    with lock: 
+        robot_state = "IDLE"
+        tracker = None
+        target_person_id = None
+        target_person_name = None
+        is_reacquiring = False # Hủy hoàn toàn
+    set_robot_pwm(0,0,"STOP")
+    set_failsafe_distance_cm(SAFE_DIST_AUTO)
 
 @socketio.on('set_target_id')
-def on_target(data):
+def set_target(data):
+    global robot_state, target_person_id, tracker, is_reacquiring
+    tid = int(data.get('id'))
     with lock:
-        global robot_state, target_person_id, tracker
+        target_person_id = tid
         robot_state = "FOLLOWING"
-        target_person_id = int(data.get('id'))
         tracker = None
-
+        is_reacquiring = True # Bật cờ này để nếu mất dấu thì tự tìm lại
+    set_failsafe_distance_cm(SAFE_DIST_AUTO)
+    
 @socketio.on('toggle_light')
-def on_light():
+def toggle_light():
     global light_state
     light_state = not light_state
     toggle_light_relay(light_state)
 
-# Slider Update
-@socketio.on('update_manual_speed')
-def handle_update_speed(data):
-    global MAX_SPEED_MANUAL
-    try: MAX_SPEED_MANUAL = int(data.get('speed', 200))
-    except: pass
-
 if __name__ == '__main__':
     load_known_faces()
-    threading.Thread(target=robot_logic_thread, daemon=True).start()
-    threading.Thread(target=serial_read_thread, daemon=True).start()
-    socketio.run(app, host='0.0.0.0', port=5001, debug=False, allow_unsafe_werkzeug=True)
+    t1 = threading.Thread(target=robot_logic_thread, daemon=True)
+    t2 = threading.Thread(target=serial_read_thread, daemon=True)
+    if not t1.is_alive(): 
+        try: t1.start() 
+        except: pass
+    if not t2.is_alive(): 
+        try: t2.start()
+        except: pass
+    socketio.run(app, host='0.0.0.0', port=5001, debug=False)

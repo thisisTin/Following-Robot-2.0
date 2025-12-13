@@ -3,393 +3,505 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Robot Panel (Đã sửa lỗi)</title>
+    <title>Robot Control Center</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
-    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* (Style cơ bản giữ nguyên) */
-        @keyframes subtleGradient { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-        @keyframes pulseGreen { 0% { box-shadow: 0 0 3px #0f0; } 50% { box-shadow: 0 0 15px #0f0; } 100% { box-shadow: 0 0 3px #0f0; } }
-        @keyframes pulseYellow { 0% { box-shadow: 0 0 3px #fa0; } 50% { box-shadow: 0 0 15px #fa0; } 100% { box-shadow: 0 0 3px #fa0; } }
-        @keyframes pulseBlue { 0% { box-shadow: 0 0 3px #0af; } 50% { box-shadow: 0 0 15px #0af; } 100% { box-shadow: 0 0 3px #0af; } }
-        
-        html, body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            color: #e0e0e0; display: flex;
-            margin: 0; padding: 0;
-            box-sizing: border-box;
-            height: 100vh; width: 100vw;
+        /* --- GIAO DIỆN DARK MODE (CỦA BẠN) --- */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            height: 100vh;
             overflow: hidden;
-            background: linear-gradient(-45deg, #1a1a2e, #121212, #1a1a2e);
-            background-size: 400% 400%;
-            animation: subtleGradient 20s ease infinite;
-        }
-        .container {
-            display: flex; flex-direction: column;
-            width: 100%; height: 100%; gap: 0;
-        }
-        .video-container {
-            flex: 1; display: flex;
-            justify-content: center; align-items: center;
-            background: #000; min-height: 0;
-            padding: 5px; box-sizing: border-box;
-            position: relative; /* Thêm để vẽ canvas */
-        }
-        .controls {
-            flex: 1; display: flex; flex-direction: column;
-            min-height: 0; overflow-y: auto;
-            padding: 1rem;
-            background: rgba(30, 30, 30, 0.65);
-            backdrop-filter: blur(15px);
-            border-top: 1px solid rgba(255, 255, 255, 0.2);
-            box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
+            user-select: none;
+            -webkit-user-select: none;
         }
 
-        /* Thẻ <img> chính để stream video */
+        .main-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            flex-direction: row; 
+        }
+
+        /* KHUNG VIDEO */
+        .video-box {
+            flex: 2;
+            background: #000;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
         #video-feed {
             max-width: 100%;
             max-height: 100%;
-            object-fit: contain;
-            /* Thay đổi con trỏ khi ở IDLE */
-            cursor: default;
-        }
-        #video-feed.idle-mode {
-            cursor: pointer; /* Cho phép click khi ở IDLE */
+            border: 2px solid #333;
+            cursor: crosshair;
+            display: block; 
         }
         
-        /* Canvas VẼ BOX (nằm đè lên video) */
         #draw-canvas {
             position: absolute;
-            top: 0; left: 0;
-            pointer-events: none; /* Cho phép click xuyên qua */
+            pointer-events: none;
         }
 
-        #status-display {
-            padding: 10px; background: rgba(0, 0, 0, 0.2);
-            margin-bottom: 10px; border-radius: 8px;
-            border-left: 5px solid #555;
-            transition: all 0.3s ease-in-out;
-            display: flex; justify-content: space-between;
+        /* KHUNG ĐIỀU KHIỂN */
+        .controls-box {
+            flex: 1;
+            background: #1e1e1e;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            overflow-y: auto;
+            border-left: 1px solid #333;
         }
-        #status-state { font-size: 1.2em; font-weight: bold; }
-        #status-fps { font-size: 1.2em; color: #aaa; }
-        #status-display.following { animation: pulseGreen 1.5s infinite; border-left-color: #0f0; }
-        #status-display.idle { animation: pulseYellow 2s infinite; border-left-color: #fa0; }
-        #status-display.manual { animation: pulseBlue 1.5s infinite; border-left-color: #0af; }
+
+        /* TRẠNG THÁI */
+        .status-panel {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 5px solid #6c757d; 
+            transition: 0.3s;
+        }
+        .status-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
+        .highlight { font-weight: bold; color: #00ff00; }
+        .val-num { font-family: monospace; font-weight: bold; font-size: 1.1em; }
         
-        .mode-controls {
+        /* SLIDER */
+        .slider-group {
+            background: #252525;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        .slider-label { font-size: 0.9em; display: flex; justify-content: space-between; margin-bottom: 5px; }
+        input[type=range] { width: 100%; cursor: pointer; }
+
+        /* NÚT BẤM */
+        .btn-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 10px;
         }
-        .mode-controls button {
-            padding: 12px 5px; font-size: 0.9em;
-            font-weight: 600; color: white;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 8px; cursor: pointer;
-            background: rgba(255, 255, 255, 0.05);
-            transition: all 0.2s ease;
+        button {
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            color: white;
+            transition: 0.2s;
+            font-size: 1rem;
         }
-        .mode-controls button:disabled {
-            color: #555; background: rgba(0, 0, 0, 0.1);
-            cursor: not-allowed;
-        }
-        .mode-controls button:active:not(:disabled) { transform: translateY(2px); }
-
-        #btn-cancel { color: #ff3b3b; } /* Nút Hủy (Màu đỏ) */
-        #btn-manual { color: #00aaff; }
-        #btn-idle { color: #ffaa00; }
-        #btn-light {
-            color: #f0f0f0; background: rgba(80, 80, 80, 0.5);
-        }
-        #btn-light.on {
-            color: #000; background: #ffff00;
-            box-shadow: 0 0 15px #ffff00;
-        }
+        button:active { transform: scale(0.95); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
         
-        /* Style D-Pad (4 nút) */
-        .joystick-area {
-            display: flex; align-items: center;
-            justify-content: center;
-            padding-top: 10px;
-            flex-grow: 1;
-        }
-        .d-pad-container { width: 180px; height: 180px; }
-        .d-pad-grid {
+        .btn-manual { background: #007bff; }
+        .btn-idle { background: #6c757d; }
+        .btn-cancel { background: #dc3545; grid-column: span 2; display: none; }
+        .btn-light { background: #ffc107; color: black; grid-column: span 2; }
+
+        /* JOYSTICK D-PAD */
+        .d-pad {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            grid-template-rows: 1fr 1fr 1fr;
-            gap: 5px; width: 100%; height: 100%;
+            grid-template-columns: 70px 70px 70px;
+            grid-template-rows: 70px 70px 70px;
+            gap: 5px;
+            align-self: center;
+            margin-top: 10px;
         }
-        .d-pad-btn {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            color: white; font-size: 24px;
-            cursor: pointer; border-radius: 10px;
-            user-select: none; -webkit-user-select: none;
-            transition: background 0.1s ease;
+        .d-btn {
+            background: #333;
+            color: white;
+            font-size: 30px;
+            border-radius: 10px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            border: 1px solid #444;
+            transition: background 0.1s;
         }
-        .d-pad-btn:active {
-            background: rgba(255, 255, 255, 0.3);
-            transform: translateY(1px);
+        .d-btn:active { background: #007bff; border-color: #0056b3; }
+
+        /* TELEMETRY CHART */
+        .chart-box {
+            background: #252525;
+            padding: 5px;
+            border-radius: 8px;
+            height: 150px;
         }
-        .d-pad-center {
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 50%;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+
+        @media (max-width: 768px) {
+            .main-container { flex-direction: column; }
+            .video-box { flex: 1; }
+            .controls-box { flex: 1; border-top: 1px solid #333; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="video-container">
-            <img id="video-feed" src="{{ url_for('video_feed') }}" alt="Video Stream">
-            <canvas id="draw-canvas"></canvas>
-        </div>
-        
-        <div class="controls">
-            <div id="status-display">
-                <div id="status-state">STATE: ...</div>
-                <div id="status-fps">FPS: --</div>
-            </div>
 
-            <div class="mode-controls">
-                <button id="btn-idle">Chế độ Idle (Chờ)</button>
-                <button id="btn-manual">Chế độ Manual</button>
-                <button id="btn-cancel">Hủy Follow</button>
-                <button id="btn-light">Bật Đèn</button>
-            </div>
-
-            <div class="joystick-area">
-                <div class="d-pad-container">
-                    <div class="d-pad-grid">
-                        <div></div> 
-                        <button id="d-pad-up" class="d-pad-btn">▲</button>
-                        <div></div> 
-                        <button id="d-pad-left" class="d-pad-btn">◄</button>
-                        <div class="d-pad-center"></div> 
-                        <button id="d-pad-right" class="d-pad-btn">►</button>
-                        <div></div> 
-                        <button id="d-pad-down" class="d-pad-btn">▼</button>
-                        <div></div> 
-                    </div>
-                </div>
-            </div>
-            <p style="text-align: center; margin:0; font-size: 0.8em;">Lệnh: <b id="joystick-command">STOP</b></p>
-        </div>
+<div class="main-container">
+    <div class="video-box">
+        <img id="video-feed" src="{{ url_for('video_feed') }}">
+        <canvas id="draw-canvas"></canvas>
     </div>
 
-    <script>
-        // --- 1. KẾT NỐI SOCKET ---
-        const socket = io();
-
-        // --- 2. LẤY CÁC PHẦN TỬ ---
-        const videoFeed = document.getElementById('video-feed');
-        const drawCanvas = document.getElementById('draw-canvas');
-        const ctx = drawCanvas.getContext('2d');
-
-        const statusDisplay = document.getElementById('status-display');
-        const statusState = document.getElementById('status-state');
-        const statusFps = document.getElementById('status-fps');
+    <div class="controls-box">
         
-        const btnManual = document.getElementById('btn-manual');
-        const btnIdle = document.getElementById('btn-idle');
-        const btnCancel = document.getElementById('btn-cancel');
-        const btnLight = document.getElementById('btn-light');
-        const joystickCommandDisplay = document.getElementById('joystick-command');
+        <div class="status-panel" id="status-panel">
+            <div class="status-row">
+                <span>Trạng thái:</span>
+                <span id="lbl-state" class="highlight">CONNECTING...</span>
+            </div>
+            <div class="status-row">
+                <span>Mục tiêu:</span>
+                <span id="lbl-target">--</span>
+            </div>
+            <div class="status-row">
+                <span>Hệ thống:</span>
+                <span id="lbl-msg" style="color: #ff00ff; font-weight: bold;">--</span>
+            </div>
+            <div class="status-row">
+                <span>Failsafe (Front):</span>
+                <span id="lbl-dist" style="color: yellow;">-- cm</span>
+            </div>
+        </div>
 
-        let detectedBoxes = []; // Lưu box để vẽ và click
-        let nativeVideoWidth = 640; // Giữ kích thước gốc
-        let nativeVideoHeight = 480;
+        <div class="status-panel" style="border-left-color: #d63384;">
+            <div class="status-row">
+                <span>Diện tích (Area):</span>
+                <span id="lbl-area" class="val-num" style="color: cyan;">0</span>
+            </div>
+            <div class="status-row">
+                <span>Sai số e(t):</span>
+                <span id="lbl-error" class="val-num" style="color: orange;">0</span>
+            </div>
+            <div class="status-row">
+                <span>PWM (L / R):</span>
+                <span>
+                    <span id="lbl-pwm-l" class="val-num" style="color: #ff6384;">0</span> / 
+                    <span id="lbl-pwm-r" class="val-num" style="color: #36a2eb;">0</span>
+                </span>
+            </div>
+        </div>
 
-        // --- 3. ĐỒNG BỘ CANVAS VỚI VIDEO ---
-        function resizeCanvas() {
-            const videoRect = videoFeed.getBoundingClientRect();
-            drawCanvas.width = videoRect.width;
-            drawCanvas.height = videoRect.height;
-            // Lưu lại kích thước gốc của video (quan trọng)
-            nativeVideoWidth = videoFeed.naturalWidth || 640;
-            nativeVideoHeight = videoFeed.naturalHeight || 480;
-        }
-        videoFeed.onload = resizeCanvas;
-        window.onresize = resizeCanvas;
-        // Chạy resize sau 1s (để chắc chắn video đã load)
-        setTimeout(resizeCanvas, 1000);
+        <div class="chart-box">
+            <canvas id="telemetryChart"></canvas>
+        </div>
 
-        // --- 4. HÀM VẼ BOX (Render Loop) ---
-        function renderBoxes() {
-            // Xóa canvas
-            ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+        <div class="slider-group">
+            <div class="slider-label">
+                <span>⚡ Max Speed (PWM)</span>
+                <span id="lbl-speed" style="color: yellow">185</span>
+            </div>
+            <input type="range" id="slider-speed" min="100" max="255" value="185">
+        </div>
+
+        <div class="btn-grid">
+            <button class="btn-idle" onclick="setMode('IDLE')">⏸ DỪNG (IDLE)</button>
+            <button class="btn-manual" onclick="setMode('MANUAL')">🎮 LÁI TAY</button>
+            <button class="btn-cancel" id="btn-cancel" onclick="cancelFollow()">❌ HỦY FOLLOW</button>
+        </div>
+
+        <div class="d-pad">
+            <div></div>
+            <div id="btn-up" class="d-btn">▲</div>
+            <div></div>
             
-            // Tính tỉ lệ scale
-            const scaleX = drawCanvas.width / nativeVideoWidth;
-            const scaleY = drawCanvas.height / nativeVideoHeight;
-
-            for (const boxData of detectedBoxes) {
-                const [x1, y1, x2, y2] = boxData.rect;
-                
-                // Scale tọa độ box
-                const d_x = x1 * scaleX;
-                const d_y = y1 * scaleY;
-                const d_w = (x2 - x1) * scaleX;
-                const d_h = (y2 - y1) * scaleY;
-
-                ctx.strokeStyle = '#FFFF00'; // Vàng (Mặc định)
-                ctx.fillStyle = '#FFFF00';
-                ctx.lineWidth = 2;
-                
-                // (Code này có thể vẽ tên nếu backend gửi)
-                // const label = boxData.name || `ID: ${boxData.id}`;
-                const label = `ID: ${boxData.id}`;
-
-                ctx.strokeRect(d_x, d_y, d_w, d_h);
-                ctx.font = '16px Arial';
-                ctx.fillText(label, d_x, d_y - 5);
-            }
-            // Yêu cầu vẽ lại frame tiếp theo
-            requestAnimationFrame(renderBoxes);
-        }
-        // Bắt đầu vòng lặp vẽ
-        renderBoxes();
-
+            <div id="btn-left" class="d-btn">◄</div>
+            <div class="d-btn" style="border-radius: 50%; background:#222; cursor: default;"></div>
+            <div id="btn-right" class="d-btn">►</div>
+            
+            <div></div>
+            <div id="btn-down" class="d-btn">▼</div>
+            <div></div>
+        </div>
         
-        // --- 5. LOGIC CLICK-ĐỂ-FOLLOW (FIX LỖI "KHÔNG CHỌN ĐƯỢC") ---
-        videoFeed.onclick = (event) => {
-            // Chỉ cho phép click khi đang ở IDLE
-            if (!statusDisplay.classList.contains('idle')) {
-                console.log('Chỉ được chọn mục tiêu khi đang ở chế độ IDLE.');
-                return;
-            }
+        <div style="text-align: center; color: #666; font-size: 0.8em; margin-top: 10px;">
+            Lệnh đang gửi: <span id="last-cmd" style="color: white">STOP</span>
+        </div>
+    </div>
+</div>
 
-            // Lấy tọa độ click trên ảnh (đã scale)
-            const rect = videoFeed.getBoundingClientRect();
-            const scaleX = nativeVideoWidth / rect.width;
-            const scaleY = nativeVideoHeight / rect.height;
+<script>
+    // --- 1. KẾT NỐI SOCKET ---
+    const socket = io();
+    
+    // DOM Elements
+    const videoFeed = document.getElementById('video-feed');
+    const canvas = document.getElementById('draw-canvas');
+    const ctx = canvas.getContext('2d');
+    
+    const lblState = document.getElementById('lbl-state');
+    const lblTarget = document.getElementById('lbl-target');
+    const lblDist = document.getElementById('lbl-dist');
+    const lblSpeed = document.getElementById('lbl-speed');
+    const sliderSpeed = document.getElementById('slider-speed');
+    const statusPanel = document.getElementById('status-panel');
+    const btnCancel = document.getElementById('btn-cancel');
+    const lastCmd = document.getElementById('last-cmd');
 
-            const clickX = (event.clientX - rect.left) * scaleX;
-            const clickY = (event.clientY - rect.top) * scaleY;
-            
-            console.log(`Đã click tại (${clickX.toFixed(0)}, ${clickY.toFixed(0)}). Đang tìm box...`);
+    const lblArea = document.getElementById('lbl-area');
+    const lblError = document.getElementById('lbl-error');
+    const lblPwmL = document.getElementById('lbl-pwm-l');
+    const lblPwmR = document.getElementById('lbl-pwm-r');
+    const lblMsg = document.getElementById('lbl-msg');
 
-            // So sánh với danh sách box
-            let targetFound = false;
-            for (const boxData of detectedBoxes) {
-                const [x1, y1, x2, y2] = boxData.rect;
-                
-                if (clickX > x1 && clickX < x2 && clickY > y1 && clickY < y2) {
-                    const targetId = boxData.id;
-                    console.log(`ĐÃ TRÚNG MỤC TIÊU! Gửi ID: ${targetId}`);
-                    
-                    // *** GỬI LỆNH LÊN SERVER (ĐÚNG TÊN) ***
-                    socket.emit('set_target_id', {'id': targetId});
-                    
-                    targetFound = true;
-                    break;
+    let detectedBoxes = [];
+    let videoWidth = 640;
+    let videoHeight = 480;
+
+    // --- 2. BIỂU ĐỒ CHART.JS ---
+    const ctxChart = document.getElementById('telemetryChart').getContext('2d');
+    const telemetryChart = new Chart(ctxChart, {
+        type: 'line',
+        data: {
+            labels: Array(30).fill(''),
+            datasets: [
+                {
+                    label: 'Error (e)',
+                    data: Array(30).fill(0),
+                    borderColor: '#ff6384', 
+                    borderWidth: 2,
+                    tension: 0.4,
+                    pointRadius: 0
+                },
+                {
+                    label: 'PWM Output',
+                    data: Array(30).fill(0),
+                    borderColor: '#36a2eb',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    pointRadius: 0
                 }
-            }
-            if (!targetFound) {
-                console.log('Click trượt, không trúng box nào.');
-            }
-        };
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { labels: { color: '#ccc', font: { size: 10 } } }
+            },
+            scales: {
+                y: { display: true, min: -255, max: 255, grid: { color: '#444' } }, 
+                x: { display: false }
+            },
+            animation: false
+        }
+    });
 
+    // --- 3. XỬ LÝ SLIDER TỐC ĐỘ ---
+    sliderSpeed.oninput = function() {
+        lblSpeed.innerText = this.value;
+    }
+    sliderSpeed.onchange = function() {
+        console.log("Cập nhật tốc độ:", this.value);
+        socket.emit('update_manual_speed', { speed: this.value });
+    }
 
-        // --- 6. NHẬN DỮ LIỆU TỪ SERVER ---
-        socket.on('robot_info', (data) => {
-            const state = data.state;
-            statusState.textContent = `STATE: ${state}`;
-            statusFps.textContent = `FPS: ${data.fps}`;  
-            statusDisplay.className = state.toLowerCase(); 
+    // --- 4. NHẬN DỮ LIỆU TỪ SERVER ---
+    socket.on('robot_info', (data) => {
+        lblState.innerText = data.state;
+        lblTarget.innerText = (data.target_id !== null) ? `ID: ${data.target_id}` : "--";
 
-            // Vô hiệu hóa nút của chế độ hiện tại
-            btnIdle.disabled = (state === 'IDLE');
-            btnManual.disabled = (state === 'MANUAL');
+        // Đổi màu trạng thái & Hiển thị nút Hủy
+        if (data.state === 'FOLLOWING') {
+            statusPanel.style.borderLeftColor = '#00ff00'; // Xanh lá
+            lblState.style.color = '#00ff00';
+            btnCancel.style.display = 'block'; // Hiện nút Hủy
+        } 
+        else if (data.state === 'MANUAL') {
+            statusPanel.style.borderLeftColor = '#007bff'; // Xanh dương
+            lblState.style.color = '#007bff';
+            btnCancel.style.display = 'none';
+        } 
+        else {
+            statusPanel.style.borderLeftColor = '#ffc107'; // Vàng (Idle)
+            lblState.style.color = '#ffc107';
+            btnCancel.style.display = 'none';
+        }
+    });
+
+    socket.on('detected_boxes', (data) => {
+        detectedBoxes = data.boxes || [];
+    });
+
+    // Nhận dữ liệu Telemetry CHI TIẾT
+    socket.on('telemetry', (data) => {
+        if(lblDist) lblDist.innerText = data.dist_front + " cm";
+        if(lblArea) lblArea.innerText = data.area_input;
+        if(lblError) lblError.innerText = data.error.toFixed(0);
+        if(lblPwmL) lblPwmL.innerText = data.pwm_l;
+        if(lblPwmR) lblPwmR.innerText = data.pwm_r;
+        
+        // HIỂN THỊ TIN NHẮN TỪ HỆ THỐNG
+        if(lblMsg && data.status_msg) {
+            lblMsg.innerText = data.status_msg;
+            if(data.status_msg.includes("TOO FAR")) lblMsg.style.color = "red";
+            else if(data.status_msg.includes("LOST")) lblMsg.style.color = "orange";
+            else lblMsg.style.color = "#00ff00";
+        }
+        
+        // Update Chart
+        telemetryChart.data.datasets[0].data.push(data.error / 100); 
+        telemetryChart.data.datasets[0].data.shift(); 
+        
+        telemetryChart.data.datasets[1].data.push(data.pwm_fwd);
+        telemetryChart.data.datasets[1].data.shift(); 
+        
+        telemetryChart.update();
+    });
+
+    // --- 5. VẼ CANVAS & CLICK ĐỂ FOLLOW ---
+    function resizeCanvas() {
+        const rect = videoFeed.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+        
+        // Căn chỉnh vị trí canvas trùng khít video
+        canvas.style.left = videoFeed.offsetLeft + "px";
+        canvas.style.top = videoFeed.offsetTop + "px";
+
+        videoWidth = videoFeed.naturalWidth || 640;
+        videoHeight = videoFeed.naturalHeight || 480;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    videoFeed.onload = resizeCanvas;
+    setInterval(resizeCanvas, 1000); 
+
+    function drawLoop() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        const scaleX = canvas.width / videoWidth;
+        const scaleY = canvas.height / videoHeight;
+
+        detectedBoxes.forEach(box => {
+            const [x1, y1, x2, y2] = box.rect;
+            const sx = x1 * scaleX;
+            const sy = y1 * scaleY;
+            const sw = (x2 - x1) * scaleX;
+            const sh = (y2 - y1) * scaleY;
+
+            ctx.strokeStyle = "#00FF00";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(sx, sy, sw, sh);
             
-            // Cập nhật nút Hủy
-            btnCancel.style.display = (state === 'FOLLOWING') ? 'block' : 'none';
-
-            // Cập nhật con trỏ chuột
-            videoFeed.className = (state === 'IDLE') ? 'idle-mode' : '';
-            
-            // Cập nhật nút Đèn
-            if (data.light) {
-                btnLight.textContent = 'Tắt Đèn';
-                btnLight.className = 'on';
-            } else {
-                btnLight.textContent = 'Bật Đèn';
-                btnLight.className = '';
-            }
+            ctx.fillStyle = "#00FF00";
+            ctx.font = "bold 14px Arial";
+            ctx.fillText(`ID: ${box.id}`, sx, sy - 5);
         });
+        requestAnimationFrame(drawLoop);
+    }
+    drawLoop();
 
-        // Nhận danh sách box (chỉ khi ở IDLE)
-        socket.on('detected_boxes', (data) => {
-            // Lưu box để vẽ và click
-            detectedBoxes = data.boxes || []; 
-        });
+    // Click vào video để chọn mục tiêu
+    videoFeed.onclick = (e) => {
+        if (lblState.innerText === 'MANUAL') return;
+
+        const rect = videoFeed.getBoundingClientRect();
+        const scaleX = videoWidth / rect.width;
+        const scaleY = videoHeight / rect.height;
         
-        // --- 7. GỬI LỆNH (NÚT BẤM) (FIX LỖI "BẤM KHÔNG ĐƯỢC") ---
-        
-        btnManual.onclick = () => {
-            console.log('Gửi lệnh: set_mode_manual');
-            socket.emit('set_mode_manual');
-        };
-        
-        btnIdle.onclick = () => {
-            console.log('Gửi lệnh: set_mode_idle');
-            socket.emit('set_mode_idle');
-        };
+        const clickX = (e.clientX - rect.left) * scaleX;
+        const clickY = (e.clientY - rect.top) * scaleY;
 
-        btnCancel.onclick = () => {
-            console.log('Gửi lệnh: cancel_target');
-            socket.emit('cancel_target'); // Backend sẽ tự chuyển về IDLE
-        };
+        console.log(`Click tại: ${clickX.toFixed(0)}, ${clickY.toFixed(0)}`);
 
-        btnLight.onclick = () => {
-            console.log('Gửi lệnh: toggle_light');
-            socket.emit('toggle_light');
-        };
-
-
-        // --- 8. GỬI LỆNH (D-PAD) ---
-        var currentManualCommand = "STOP";
-
-        function sendManualCommand(cmd) {
-            // Chỉ gửi khi lệnh thay đổi
-            if (cmd !== currentManualCommand) { // <--- DÒNG NÀY GÂY LỖI
-                socket.emit('robot_command', { command: 'MANUAL_' + cmd });
-                joystickCommandDisplay.textContent = cmd;
-                currentManualCommand = cmd;
+        let found = false;
+        for (let box of detectedBoxes) {
+            const [x1, y1, x2, y2] = box.rect;
+            if (clickX >= x1 && clickX <= x2 && clickY >= y1 && clickY <= y2) {
+                console.log(`--> Chọn ID: ${box.id}`);
+                socket.emit('set_target_id', { id: box.id });
+                found = true;
+                break;
             }
         }
+        if (!found) console.log("Không trúng box nào.");
+    };
 
-        const dPadButtons = {
-            'd-pad-up': 'FORWARD',
-            'd-pad-down': 'BACKWARD',
-            'd-pad-left': 'LEFT',
-            'd-pad-right': 'RIGHT'
+    // --- 6. NÚT ĐIỀU KHIỂN ---
+    window.setMode = function(mode) {
+        if (mode === 'IDLE') socket.emit('set_mode_idle');
+        if (mode === 'MANUAL') socket.emit('set_mode_manual');
+    }
+    window.cancelFollow = function() {
+        // 1. Gửi lệnh lên Server (Vẫn gửi như cũ)
+        socket.emit('cancel_target');
+
+        // 2. CẬP NHẬT GIAO DIỆN NGAY LẬP TỨC (Không chờ Server)
+        // Ẩn nút Hủy ngay
+        const btnCancel = document.getElementById('btn-cancel');
+        if(btnCancel) btnCancel.style.display = 'none';
+
+        // Đổi trạng thái hiển thị sang IDLE (Vàng) ngay
+        const lblState = document.getElementById('lbl-state');
+        const statusPanel = document.getElementById('status-panel');
+        
+        if(lblState) {
+            lblState.innerText = "IDLE (STOPPING...)";
+            lblState.style.color = '#ffc107'; // Màu vàng
+        }
+        if(statusPanel) {
+            statusPanel.style.borderLeftColor = '#ffc107';
+        }
+        
+        // Reset thông tin mục tiêu
+        const lblTarget = document.getElementById('lbl-target');
+        if(lblTarget) lblTarget.innerText = "--";
+
+        // Xóa các ô xanh trên màn hình (nếu có)
+        detectedBoxes = [];
+        const canvas = document.getElementById('draw-canvas');
+        const ctx = canvas.getContext('2d');
+        if(ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        console.log(">>> Đã cưỡng chế giao diện về IDLE");
+    }
+
+    // --- 7. XỬ LÝ D-PAD ---
+    const buttons = {
+        'btn-up': 'FORWARD',
+        'btn-down': 'BACKWARD',
+        'btn-left': 'LEFT',
+        'btn-right': 'RIGHT'
+    };
+
+    for (const [id, cmd] of Object.entries(buttons)) {
+        const btn = document.getElementById(id);
+        
+        const startMove = (e) => {
+            e.preventDefault(); 
+            socket.emit('robot_command', { command: 'MANUAL_' + cmd });
+            lastCmd.innerText = cmd;
+            btn.style.background = '#0056b3';
+        };
+        
+        const stopMove = (e) => {
+            e.preventDefault();
+            socket.emit('robot_command', { command: 'MANUAL_STOP' });
+            lastCmd.innerText = "STOP";
+            btn.style.background = '#333';
         };
 
-        // Gán sự kiện cho 4 nút
-        for (const [id, command] of Object.entries(dPadButtons)) {
-            const button = document.getElementById(id);
-            
-            const sendCmd = (e) => {
-                e.preventDefault(); 
-                sendManualCommand(command);
-            };
-            const sendStop = (e) => {
-                e.preventDefault();
-                sendManualCommand("STOP");
-            };
+        btn.addEventListener('mousedown', startMove);
+        btn.addEventListener('mouseup', stopMove);
+        btn.addEventListener('mouseleave', stopMove);
+        btn.addEventListener('touchstart', startMove);
+        btn.addEventListener('touchend', stopMove);
+    }
 
-            // Mouse events (PC)
-            button.addEventListener('mousedown', sendCmd);
-            button.addEventListener('mouseup', sendStop);
-            button.addEventListener('mouseleave', sendStop); 
-
-            // Touch events (Mobile)
-            button.addEventListener('touchstart', sendCmd);
-            button.addEventListener('touchend', sendStop);
-        }
-    </script>
+</script>
 </body>
 </html>

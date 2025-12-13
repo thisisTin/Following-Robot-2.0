@@ -18,12 +18,7 @@
 #define ECHO_PIN_FRONT 23 
 #define TRIG_PIN_BACK 19 
 #define ECHO_PIN_BACK 4  
-#define MAX_DISTANCE 400 // Khoảng cách đo tối đa (cm)
-
-// === CẤU HÌNH FAILSAFE ===
-// YÊU CẦU: < 50cm là dừng ngay lập tức
-const int STOP_DISTANCE_FRONT = 50; // cm
-const int STOP_DISTANCE_BACK = 50;  // cm
+#define MAX_DISTANCE 400 
 
 // Khởi tạo cảm biến
 NewPing sonarFront(TRIG_PIN_FRONT, ECHO_PIN_FRONT, MAX_DISTANCE);
@@ -32,23 +27,16 @@ NewPing sonarBack(TRIG_PIN_BACK, ECHO_PIN_BACK, MAX_DISTANCE);
 // Biến toàn cục
 int leftSpeed = 0; 
 int rightSpeed = 0;
-bool obstacleDetected = false; 
-bool obstacleFront = false; 
-bool obstacleBack = false;  
-unsigned long lastObstacleCheck = 0; 
-const int obstacleCheckInterval = 50; // Kiểm tra nhanh hơn (50ms)
 String inputString = "";
 bool stringComplete = false;
-int current_stop_distance = 50;
+
 // --- CÁC HÀM ĐIỀU KHIỂN ---
 
 void stopMotors() { 
-    analogWrite(ENA, 0); 
-    analogWrite(ENB, 0); 
+    analogWrite(ENA, 0); analogWrite(ENB, 0); 
     digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
     digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
-    leftSpeed = 0; 
-    rightSpeed = 0; 
+    leftSpeed = 0; rightSpeed = 0; 
 }
 
 void lightTest() { 
@@ -56,19 +44,8 @@ void lightTest() {
     digitalWrite(relay, LOW); delay(200); 
 }
 
+// Hàm di chuyển (KHÔNG CÒN CHECK VẬT CẢN)
 void moveMotors(int targetLeftSpeed, int targetRightSpeed) { 
-    // Logic chặn chiều di chuyển nếu có vật cản
-    if (obstacleFront && (targetLeftSpeed > 0 || targetRightSpeed > 0)) {
-        // Nếu có vật cản trước mà cố đi tiến -> Dừng
-        stopMotors();
-        return;
-    }
-    if (obstacleBack && (targetLeftSpeed < 0 || targetRightSpeed < 0)) {
-        // Nếu có vật cản sau mà cố đi lùi -> Dừng
-        stopMotors();
-        return;
-    }
-
     leftSpeed = targetLeftSpeed; 
     rightSpeed = targetRightSpeed; 
 
@@ -95,7 +72,7 @@ void moveMotors(int targetLeftSpeed, int targetRightSpeed) {
     analogWrite(ENB, targetRightSpeed); 
 }
 
-// Gửi trạng thái lên Python: STATUS:L:R:Front:Back:Obstacle
+// Gửi dữ liệu về Python (Chỉ gửi số liệu thô)
 void sendStatus() { 
     int distFront = sonarFront.ping_cm();
     if (distFront == 0) distFront = MAX_DISTANCE;
@@ -107,34 +84,12 @@ void sendStatus() {
     Serial.print(leftSpeed); Serial.print(":"); 
     Serial.print(rightSpeed); Serial.print(":");
     Serial.print(distFront); Serial.print(":");  
-    Serial.print(distBack); Serial.print(":"); 
-    Serial.println(obstacleDetected ? "YES" : "NO"); 
-}
-
-void checkObstacles() { 
-    int dF = sonarFront.ping_cm(); 
-    if (dF == 0) dF = MAX_DISTANCE; 
-    
-    int dB = sonarBack.ping_cm(); 
-    if (dB == 0) dB = MAX_DISTANCE; 
-
-    // SỬ DỤNG BIẾN ĐỘNG current_stop_distance
-    obstacleFront = (dF > 0 && dF < current_stop_distance);
-    obstacleBack = (dB > 0 && dB < current_stop_distance);
-    obstacleDetected = obstacleFront || obstacleBack;
-
-    if (obstacleFront && (leftSpeed > 0 || rightSpeed > 0)) {
-        stopMotors();
-    }
-    if (obstacleBack && (leftSpeed < 0 || rightSpeed < 0)) {
-        stopMotors();
-    }
+    Serial.print(distBack); Serial.println(); // Bỏ cái YES/NO thừa thãi
 }
 
 void processCommand(String command) { 
     command.trim(); 
     if (command.startsWith("MOVE:")) { 
-        // Format: MOVE:LeftPWM:RightPWM
         int firstColon = command.indexOf(':'); 
         int secondColon = command.indexOf(':', firstColon + 1);         
         if (firstColon > 0 && secondColon > 0) { 
@@ -144,17 +99,7 @@ void processCommand(String command) {
             Serial.println("OK:MOVE"); 
         } 
     }
-    else if (command.startsWith("SET_STOP_DIST:")) { // LỆNH MỚI
-        int firstColon = command.indexOf(':');
-        int dist = command.substring(firstColon + 1).toInt();
-        if (dist >= 5 && dist <= MAX_DISTANCE) { // Giới hạn an toàn
-            current_stop_distance = dist;
-            Serial.print("OK:SET_STOP_DIST:");
-            Serial.println(current_stop_distance);
-        } else {
-            Serial.println("ERROR:INVALID_STOP_DIST");
-        }
-    }  
+    // Lệnh SET_STOP_DIST không cần thiết nữa vì Arduino không tự dừng
     else if (command.startsWith("LIGHT:")) { 
         if (command.indexOf("ON") > 0) digitalWrite(relay, HIGH);
         else digitalWrite(relay, LOW);
@@ -176,16 +121,14 @@ void setup() {
     pinMode(ENA, OUTPUT); pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT); 
     pinMode(ENB, OUTPUT); pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
     pinMode(relay, OUTPUT); pinMode(LED_BUILTIN, OUTPUT); 
+    
     stopMotors(); 
     lightTest(); 
-    Serial.println("ROBOT READY. FAILSAFE: 50cm");
-    Serial.print("ROBOT READY. DYNAMIC FAILSAFE: ");
-    Serial.print(current_stop_distance);
-    Serial.println("cm");
+    Serial.println("ROBOT SLAVE READY (NO FAILSAFE ON BOARD)");
 } 
 
 void loop() { 
-    // Đọc Serial không chặn (Non-blocking)
+    // Đọc Serial
     while (Serial.available()) { 
         char inChar = (char)Serial.read();             
         if (inChar == '\n' || inChar == '\r') { 
@@ -203,9 +146,10 @@ void loop() {
         digitalWrite(LED_BUILTIN, LOW);
     }
     
-    // Kiểm tra vật cản định kỳ
-    if (millis() - lastObstacleCheck >= obstacleCheckInterval) { 
-        checkObstacles(); 
-        lastObstacleCheck = millis(); 
-    } 
+    // Gửi status định kỳ mỗi 100ms để Python có dữ liệu mới nhất
+    static unsigned long lastStatusTime = 0;
+    if (millis() - lastStatusTime > 100) {
+        sendStatus();
+        lastStatusTime = millis();
+    }
 }
